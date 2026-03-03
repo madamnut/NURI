@@ -1,0 +1,4 @@
+roots=Assets/A_Game
+includedExtensions=.cs,.json
+count=0
+---
