@@ -1,13 +1,14 @@
+// Assets/A_Game/SubChunk.cs  (네 경로 기준)
+// 교체 범위: 파일 전체
+
 using UnityEngine;
 
+[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer), typeof(MeshCollider))]
 public sealed class SubChunk : MonoBehaviour
 {
     [Header("서브청크 인덱스 (0~15)")]
     [Range(0, 15)]
     [SerializeField] private int _subIndex;
-
-    [Header("옵션")]
-    [SerializeField] private bool _useCollider;
 
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
@@ -21,26 +22,26 @@ public sealed class SubChunk : MonoBehaviour
     {
         _meshFilter = GetComponent<MeshFilter>();
         _meshRenderer = GetComponent<MeshRenderer>();
+        _meshCollider = GetComponent<MeshCollider>();
 
-        if (_useCollider)
-            _meshCollider = GetComponent<MeshCollider>();
+        // 지형 콜라이더는 Convex=false
+        _meshCollider.convex = false;
 
         _mesh = new Mesh { name = $"SubChunkMesh_{_subIndex:00}" };
         _mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+
         _meshFilter.sharedMesh = _mesh;
+
+        // 빈 메쉬를 콜라이더에 넣으면 PhysX가 실패할 수 있으니, 초기에는 null
+        _meshCollider.sharedMesh = null;
     }
 
-    // 머티리얼 설정(초기엔 전부 동일 머티리얼 사용)
     public void SetMaterial(Material mat)
     {
         if (mat == null) return;
         _meshRenderer.sharedMaterial = mat;
     }
 
-    // 메시 데이터 적용(메인 스레드에서 호출)
-    // - vertices: 정점 목록
-    // - triangles: 인덱스(3개씩 삼각형)
-    // - normals: null이면 RecalculateNormals 사용
     public void ApplyMesh(Vector3[] vertices, int[] triangles, Vector3[] normals = null)
     {
         if (_mesh == null)
@@ -52,6 +53,13 @@ public sealed class SubChunk : MonoBehaviour
 
         _mesh.Clear();
 
+        // 빈 메쉬면: 렌더도 비우고 콜라이더는 반드시 null로
+        if (vertices == null || vertices.Length == 0 || triangles == null || triangles.Length == 0)
+        {
+            _meshCollider.sharedMesh = null;
+            return;
+        }
+
         _mesh.vertices = vertices;
         _mesh.triangles = triangles;
 
@@ -62,14 +70,8 @@ public sealed class SubChunk : MonoBehaviour
 
         _mesh.RecalculateBounds();
 
-        if (_useCollider)
-        {
-            if (_meshCollider == null) _meshCollider = GetComponent<MeshCollider>();
-            if (_meshCollider != null)
-            {
-                _meshCollider.sharedMesh = null;
-                _meshCollider.sharedMesh = _mesh;
-            }
-        }
+        // 콜라이더 갱신 (null -> mesh)
+        _meshCollider.sharedMesh = null;
+        _meshCollider.sharedMesh = _mesh;
     }
 }

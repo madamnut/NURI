@@ -108,7 +108,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -127,7 +127,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 0
-  _useCollider: 0
 --- !u!1 &559217292085379003
 GameObject:
   m_ObjectHideFlags: 0
@@ -236,7 +235,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -255,7 +254,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 4
-  _useCollider: 0
 --- !u!1 &578902971076139333
 GameObject:
   m_ObjectHideFlags: 0
@@ -364,7 +362,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -383,7 +381,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 6
-  _useCollider: 0
 --- !u!1 &1338441603572515737
 GameObject:
   m_ObjectHideFlags: 0
@@ -492,7 +489,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -511,7 +508,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 12
-  _useCollider: 0
 --- !u!1 &1354940854637869927
 GameObject:
   m_ObjectHideFlags: 0
@@ -620,7 +616,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -639,7 +635,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 15
-  _useCollider: 0
 --- !u!1 &2124107095214462908
 GameObject:
   m_ObjectHideFlags: 0
@@ -748,7 +743,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -767,7 +762,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 7
-  _useCollider: 0
 --- !u!1 &2546545670364470596
 GameObject:
   m_ObjectHideFlags: 0
@@ -876,7 +870,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -895,7 +889,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 13
-  _useCollider: 0
 --- !u!1 &2616310117483391526
 GameObject:
   m_ObjectHideFlags: 0
@@ -1004,7 +997,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1023,7 +1016,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 8
-  _useCollider: 0
 --- !u!1 &3240669308406628698
 GameObject:
   m_ObjectHideFlags: 0
@@ -1132,7 +1124,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1151,7 +1143,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 11
-  _useCollider: 0
 --- !u!1 &3906212489406482183
 GameObject:
   m_ObjectHideFlags: 0
@@ -1260,7 +1251,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1279,7 +1270,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 9
-  _useCollider: 0
 --- !u!1 &3950388906504457277
 GameObject:
   m_ObjectHideFlags: 0
@@ -1467,7 +1457,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1486,7 +1476,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 10
-  _useCollider: 0
 --- !u!1 &6487486660721555964
 GameObject:
   m_ObjectHideFlags: 0
@@ -1595,7 +1584,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1614,7 +1603,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 3
-  _useCollider: 0
 --- !u!1 &6658510355623292899
 GameObject:
   m_ObjectHideFlags: 0
@@ -1723,7 +1711,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1742,7 +1730,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 2
-  _useCollider: 0
 --- !u!1 &7885280764521448732
 GameObject:
   m_ObjectHideFlags: 0
@@ -1851,7 +1838,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1870,7 +1857,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 5
-  _useCollider: 0
 --- !u!1 &8024084270026387031
 GameObject:
   m_ObjectHideFlags: 0
@@ -1979,7 +1965,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -1998,7 +1984,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 1
-  _useCollider: 0
 --- !u!1 &8423015213755402539
 GameObject:
   m_ObjectHideFlags: 0
@@ -2107,7 +2092,7 @@ MeshCollider:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
+  m_ProvidesContacts: 1
   m_Enabled: 1
   serializedVersion: 5
   m_Convex: 0
@@ -2126,4 +2111,3 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SubChunk
   _subIndex: 14
-  _useCollider: 0
