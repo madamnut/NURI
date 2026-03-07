@@ -1291,7 +1291,7 @@ MonoBehaviour:
     SurfaceFade: 8
   _chunkViewPrefab: {fileID: 68376585372058145, guid: 4adc5534646c11c4788b785e65fb5f88, type: 3}
   _chunkRoot: {fileID: 1976003902}
-  _terrainMaterial: {fileID: 2100000, guid: 9936319df9970504e99b5af1ab084fac, type: 2}
+  _terrainMaterial: {fileID: 2100000, guid: b74fb885bc4028a48b5bcdcffc5400dd, type: 2}
   _applyMeshCollider: 1
 --- !u!4 &1976003902
 Transform:
