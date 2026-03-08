@@ -363,7 +363,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.3
-  far clip plane: 1000
+  far clip plane: 2000
   field of view: 60
   orthographic: 0
   orthographic size: 5
@@ -2050,9 +2050,16 @@ MonoBehaviour:
     BaseRockHeight: 65
     SurfaceFade: 8
   _streamingTarget: {fileID: 1955707069}
-  _loadRadius: 8
-  _maxChunkLoadsPerFrame: 4
+  _baseChunkDiameter: 16
+  _proxy1Border: 32
+  _proxy2Border: 32
+  _maxLod0LoadsPerFrame: 2
+  _maxProxy1LoadsPerFrame: 1
+  _maxProxy2LoadsPerFrame: 1
   _maxChunkUnloadsPerFrame: 8
+  _maxLod0AppliesPerFrame: 2
+  _maxProxy1AppliesPerFrame: 1
+  _maxProxy2AppliesPerFrame: 1
   _chunkViewPrefab: {fileID: 68376585372058145, guid: 4adc5534646c11c4788b785e65fb5f88, type: 3}
   _chunkRoot: {fileID: 1976003902}
   _terrainMaterial: {fileID: 2100000, guid: 9936319df9970504e99b5af1ab084fac, type: 2}
@@ -2411,7 +2418,7 @@ MonoBehaviour:
   m_VertexBufferAutoSizeReduction: 0
   m_useMaxVisibleDescender: 1
   m_pageToDisplay: 1
-  m_margin: {x: 0, y: -19.32866, z: 10, w: 0}
+  m_margin: {x: 2.0646973, y: -19.32866, z: 10, w: 0}
   m_isUsingLegacyAnimationComponent: 0
   m_isVolumetricText: 0
   m_hasFontAssetChanged: 0

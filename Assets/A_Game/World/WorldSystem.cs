@@ -13,6 +13,14 @@ public sealed class WorldSystem : MonoBehaviour
     private const int LOD1 = 1;
     private const int LOD2 = 2;
 
+    private enum InitialStreamingPhase
+    {
+        Lod0Only = 0,
+        Proxy1 = 1,
+        Proxy2 = 2,
+        Complete = 3
+    }
+
     [Header("Generation")]
     [SerializeField] private TerrainGenerationSettings _generationSettings = new TerrainGenerationSettings
     {
@@ -31,9 +39,16 @@ public sealed class WorldSystem : MonoBehaviour
 
     [Header("Streaming")]
     [SerializeField] private Transform _streamingTarget;
-    [SerializeField] private int _loadRadius = 8;
-    [SerializeField] private int _maxChunkLoadsPerFrame = 2;
+    [SerializeField] private int _baseChunkDiameter = 16;
+    [SerializeField] private int _proxy1Border = 16;
+    [SerializeField] private int _proxy2Border = 32;
+    [SerializeField] private int _maxLod0LoadsPerFrame = 2;
+    [SerializeField] private int _maxProxy1LoadsPerFrame = 1;
+    [SerializeField] private int _maxProxy2LoadsPerFrame = 1;
     [SerializeField] private int _maxChunkUnloadsPerFrame = 4;
+    [SerializeField] private int _maxLod0AppliesPerFrame = 2;
+    [SerializeField] private int _maxProxy1AppliesPerFrame = 1;
+    [SerializeField] private int _maxProxy2AppliesPerFrame = 1;
 
     [Header("View")]
     [SerializeField] private ChunkView _chunkViewPrefab;
@@ -108,44 +123,104 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
+    private sealed class PendingProxyMeshBuild : IDisposable
+    {
+        public ProxyCoord Coord;
+        public ProxyChunkView View;
+        public NativeArray<byte> TriangleCounts;
+        public NativeArray<int> TriangleOffsets;
+        public SubChunkMeshData MeshData;
+        public JobHandle Handle;
+        public bool WriteScheduled;
+
+        public void Dispose()
+        {
+            if (TriangleCounts.IsCreated)
+            {
+                TriangleCounts.Dispose();
+            }
+
+            if (TriangleOffsets.IsCreated)
+            {
+                TriangleOffsets.Dispose();
+            }
+
+            if (MeshData != null)
+            {
+                MeshData.Dispose();
+                MeshData = null;
+            }
+        }
+    }
+
     private readonly ChunkDataStore _chunkStore = new ChunkDataStore();
     private readonly Dictionary<ChunkCoord, ChunkView> _chunkViews = new Dictionary<ChunkCoord, ChunkView>();
     private readonly Dictionary<ChunkCoord, int> _activeChunkLods = new Dictionary<ChunkCoord, int>();
+    private readonly Dictionary<ProxyCoord, ProxyChunkView> _proxyViews = new Dictionary<ProxyCoord, ProxyChunkView>();
     private readonly HashSet<ChunkCoord> _modifiedChunks = new HashSet<ChunkCoord>();
     private readonly HashSet<ChunkCoord> _desiredChunkCoords = new HashSet<ChunkCoord>();
     private readonly Dictionary<ChunkCoord, int> _desiredChunkLods = new Dictionary<ChunkCoord, int>();
+    private readonly HashSet<ProxyCoord> _desiredProxyCoords = new HashSet<ProxyCoord>();
     private readonly Queue<ChunkCoord> _pendingChunkLoads = new Queue<ChunkCoord>();
     private readonly Queue<ChunkCoord> _pendingChunkUnloads = new Queue<ChunkCoord>();
     private readonly HashSet<ChunkCoord> _pendingLoadSet = new HashSet<ChunkCoord>();
     private readonly HashSet<ChunkCoord> _pendingUnloadSet = new HashSet<ChunkCoord>();
+    private readonly Queue<ProxyCoord> _pendingProxyLoads = new Queue<ProxyCoord>();
+    private readonly Queue<ProxyCoord> _pendingProxyUnloads = new Queue<ProxyCoord>();
+    private readonly HashSet<ProxyCoord> _pendingProxyLoadSet = new HashSet<ProxyCoord>();
+    private readonly HashSet<ProxyCoord> _pendingProxyUnloadSet = new HashSet<ProxyCoord>();
     private readonly Dictionary<ChunkCoord, PendingChunkGeneration> _pendingGenerations = new Dictionary<ChunkCoord, PendingChunkGeneration>();
     private readonly Dictionary<ChunkCoord, PendingChunkMeshBuild> _pendingChunkMeshBuilds = new Dictionary<ChunkCoord, PendingChunkMeshBuild>();
+    private readonly Dictionary<ProxyCoord, PendingProxyMeshBuild> _pendingProxyMeshBuilds = new Dictionary<ProxyCoord, PendingProxyMeshBuild>();
     private readonly List<ChunkCoord> _coordBuffer = new List<ChunkCoord>();
     private readonly List<ChunkCoord> _loadBuffer = new List<ChunkCoord>();
     private readonly List<ChunkCoord> _unloadBuffer = new List<ChunkCoord>();
     private readonly List<ChunkCoord> _deferredUnloadBuffer = new List<ChunkCoord>();
     private readonly List<ChunkCoord> _completedGenerationBuffer = new List<ChunkCoord>();
     private readonly List<ChunkCoord> _completedChunkMeshBuffer = new List<ChunkCoord>();
+    private readonly List<ProxyCoord> _proxyCoordBuffer = new List<ProxyCoord>();
+    private readonly List<ProxyCoord> _proxyLoadBuffer = new List<ProxyCoord>();
+    private readonly List<ProxyCoord> _proxyUnloadBuffer = new List<ProxyCoord>();
+    private readonly List<ProxyCoord> _deferredProxyUnloadBuffer = new List<ProxyCoord>();
+    private readonly List<ProxyCoord> _completedProxyMeshBuffer = new List<ProxyCoord>();
     private readonly Stack<ChunkView> _chunkViewPool = new Stack<ChunkView>();
+    private readonly Stack<ProxyChunkView> _proxyViewPool = new Stack<ProxyChunkView>();
     private readonly HashSet<Vector3Int> _preExistingSolidCells = new HashSet<Vector3Int>();
 
     private bool _hasStreamingCenter;
     private ChunkCoord _streamingCenter;
+    private InitialStreamingPhase _initialStreamingPhase;
 
-    public int ActiveChunkCount => _chunkViews.Count;
+    public int ActiveChunkCount => _chunkViews.Count + _proxyViews.Count;
     public int LoadedChunkCount => _chunkStore.Count;
-    public int PendingChunkLoadCount => _pendingChunkLoads.Count;
+    public int PendingChunkLoadCount => _pendingChunkLoads.Count + _pendingProxyLoads.Count;
     public int PendingGenerationCount => _pendingGenerations.Count;
-    public int PendingMeshBuildCount => _pendingChunkMeshBuilds.Count;
-    public int PendingChunkUnloadCount => _pendingChunkUnloads.Count;
-    public int PooledChunkViewCount => _chunkViewPool.Count;
+    public int PendingMeshBuildCount => _pendingChunkMeshBuilds.Count + _pendingProxyMeshBuilds.Count;
+    public int PendingChunkUnloadCount => _pendingChunkUnloads.Count + _pendingProxyUnloads.Count;
+    public int PooledChunkViewCount => _chunkViewPool.Count + _proxyViewPool.Count;
     public bool HasGeneratedWorld { get; private set; }
     public TerrainMaterialLibrary TerrainMaterialLibrary => _terrainMaterialLibrary;
     public int GenerationSeed => _generationSettings.Seed;
-    public int LoadRadius => Mathf.Max(0, _loadRadius);
+    public int BaseChunkDiameter => SanitizePositiveMultiple(_baseChunkDiameter, 4);
+    public int Proxy1Border => SanitizePositiveMultiple(_proxy1Border, 2);
+    public int Proxy2Border => SanitizePositiveMultiple(_proxy2Border, 4);
     private int MaxChunkViewPoolCount => Mathf.Max(0, _maxChunkViewPoolCount);
     private float BlendDeadZoneMin => Mathf.Clamp01(Mathf.Min(_blendDeadZoneMin, _blendDeadZoneMax));
     private float BlendDeadZoneMax => Mathf.Clamp01(Mathf.Max(_blendDeadZoneMin, _blendDeadZoneMax));
+
+    private void OnValidate()
+    {
+        _baseChunkDiameter = SanitizePositiveMultiple(_baseChunkDiameter, 4);
+        _proxy1Border = SanitizePositiveMultiple(_proxy1Border, 2);
+        _proxy2Border = SanitizePositiveMultiple(_proxy2Border, 4);
+        _maxLod0LoadsPerFrame = Mathf.Max(0, _maxLod0LoadsPerFrame);
+        _maxProxy1LoadsPerFrame = Mathf.Max(0, _maxProxy1LoadsPerFrame);
+        _maxProxy2LoadsPerFrame = Mathf.Max(0, _maxProxy2LoadsPerFrame);
+        _maxChunkUnloadsPerFrame = Mathf.Max(0, _maxChunkUnloadsPerFrame);
+        _maxLod0AppliesPerFrame = Mathf.Max(0, _maxLod0AppliesPerFrame);
+        _maxProxy1AppliesPerFrame = Mathf.Max(0, _maxProxy1AppliesPerFrame);
+        _maxProxy2AppliesPerFrame = Mathf.Max(0, _maxProxy2AppliesPerFrame);
+    }
 
     [ContextMenu("Generate Initial World")]
     public void GenerateInitialWorld()
@@ -154,12 +229,13 @@ public sealed class WorldSystem : MonoBehaviour
         ClearWorld();
 
         HasGeneratedWorld = true;
+        _initialStreamingPhase = InitialStreamingPhase.Lod0Only;
         RefreshStreamingCenter(true);
-        ProcessQueuedOperations(
-            Mathf.Max(0, _maxChunkLoadsPerFrame),
-            Mathf.Max(0, _maxChunkUnloadsPerFrame));
+        ProcessQueuedOperations();
         ProcessCompletedGenerationJobs();
         ProcessCompletedChunkMeshBuilds();
+        ProcessCompletedProxyMeshBuilds();
+        AdvanceInitialStreamingPhase();
     }
 
     [ContextMenu("Clear World")]
@@ -177,6 +253,16 @@ public sealed class WorldSystem : MonoBehaviour
             DestroyChunkView(view);
         }
 
+        foreach (ProxyChunkView view in _proxyViews.Values)
+        {
+            if (view == null)
+            {
+                continue;
+            }
+
+            DestroyProxyView(view);
+        }
+
         while (_chunkViewPool.Count > 0)
         {
             ChunkView pooledView = _chunkViewPool.Pop();
@@ -186,23 +272,44 @@ public sealed class WorldSystem : MonoBehaviour
             }
         }
 
+        while (_proxyViewPool.Count > 0)
+        {
+            ProxyChunkView pooledView = _proxyViewPool.Pop();
+            if (pooledView != null)
+            {
+                DestroyProxyView(pooledView);
+            }
+        }
+
         _chunkViews.Clear();
         _activeChunkLods.Clear();
+        _proxyViews.Clear();
         _chunkStore.ClearAndDispose();
         _desiredChunkCoords.Clear();
         _desiredChunkLods.Clear();
+        _desiredProxyCoords.Clear();
         _pendingChunkLoads.Clear();
         _pendingChunkUnloads.Clear();
         _pendingLoadSet.Clear();
         _pendingUnloadSet.Clear();
+        _pendingProxyLoads.Clear();
+        _pendingProxyUnloads.Clear();
+        _pendingProxyLoadSet.Clear();
+        _pendingProxyUnloadSet.Clear();
         _coordBuffer.Clear();
         _loadBuffer.Clear();
         _unloadBuffer.Clear();
         _deferredUnloadBuffer.Clear();
         _completedGenerationBuffer.Clear();
         _completedChunkMeshBuffer.Clear();
+        _proxyCoordBuffer.Clear();
+        _proxyLoadBuffer.Clear();
+        _proxyUnloadBuffer.Clear();
+        _deferredProxyUnloadBuffer.Clear();
+        _completedProxyMeshBuffer.Clear();
         _modifiedChunks.Clear();
         _hasStreamingCenter = false;
+        _initialStreamingPhase = InitialStreamingPhase.Lod0Only;
         HasGeneratedWorld = false;
     }
 
@@ -315,11 +422,13 @@ public sealed class WorldSystem : MonoBehaviour
         RefreshStreamingCenter(false);
         ProcessCompletedGenerationJobs();
         ProcessCompletedChunkMeshBuilds();
-        ProcessQueuedOperations(
-            Mathf.Max(0, _maxChunkLoadsPerFrame),
-            Mathf.Max(0, _maxChunkUnloadsPerFrame));
+        ProcessCompletedProxyMeshBuilds();
+        AdvanceInitialStreamingPhase();
+        ProcessQueuedOperations();
         ProcessCompletedGenerationJobs();
         ProcessCompletedChunkMeshBuilds();
+        ProcessCompletedProxyMeshBuilds();
+        AdvanceInitialStreamingPhase();
     }
 
     private void OnDestroy()
@@ -368,25 +477,30 @@ public sealed class WorldSystem : MonoBehaviour
     {
         _desiredChunkCoords.Clear();
         _desiredChunkLods.Clear();
-        int loadRadius = Mathf.Max(0, _loadRadius);
-        int maxRadius = loadRadius * 3;
+        _desiredProxyCoords.Clear();
 
-        for (int dz = -maxRadius; dz <= maxRadius; dz++)
+        GetBaseChunkRect(center, out int baseMinX, out int baseMaxX, out int baseMinZ, out int baseMaxZ);
+        int proxy1MinX = baseMinX - Proxy1Border;
+        int proxy1MaxX = baseMaxX + Proxy1Border;
+        int proxy1MinZ = baseMinZ - Proxy1Border;
+        int proxy1MaxZ = baseMaxZ + Proxy1Border;
+        int proxy2MinX = proxy1MinX - Proxy2Border;
+        int proxy2MaxX = proxy1MaxX + Proxy2Border;
+        int proxy2MinZ = proxy1MinZ - Proxy2Border;
+        int proxy2MaxZ = proxy1MaxZ + Proxy2Border;
+
+        for (int z = baseMinZ; z < baseMaxZ; z++)
         {
-            for (int dx = -maxRadius; dx <= maxRadius; dx++)
+            for (int x = baseMinX; x < baseMaxX; x++)
             {
-                int distance = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz));
-                int desiredLod = ResolveDesiredLod(distance, loadRadius);
-                if (desiredLod < 0)
-                {
-                    continue;
-                }
-
-                ChunkCoord coord = new ChunkCoord(center.X + dx, center.Z + dz);
+                ChunkCoord coord = new ChunkCoord(x, z);
                 _desiredChunkCoords.Add(coord);
-                _desiredChunkLods[coord] = desiredLod;
+                _desiredChunkLods[coord] = LOD0;
             }
         }
+
+        AddDesiredProxies(LOD1, 2, proxy1MinX, proxy1MaxX, proxy1MinZ, proxy1MaxZ, baseMinX, baseMaxX, baseMinZ, baseMaxZ);
+        AddDesiredProxies(LOD2, 4, proxy2MinX, proxy2MaxX, proxy2MinZ, proxy2MaxZ, proxy1MinX, proxy1MaxX, proxy1MinZ, proxy1MaxZ);
 
         _loadBuffer.Clear();
         foreach (KeyValuePair<ChunkCoord, int> pair in _desiredChunkLods)
@@ -430,6 +544,54 @@ public sealed class WorldSystem : MonoBehaviour
             EnqueueChunkLoad(_loadBuffer[i]);
         }
 
+        _proxyLoadBuffer.Clear();
+        foreach (ProxyCoord coord in _desiredProxyCoords)
+        {
+            if (!IsProxyLoadAllowedInCurrentPhase(coord.LodLevel))
+            {
+                continue;
+            }
+
+            if (_proxyViews.ContainsKey(coord))
+            {
+                continue;
+            }
+
+            if (HasPendingJobsForProxy(coord))
+            {
+                continue;
+            }
+
+            _proxyLoadBuffer.Add(coord);
+        }
+
+        _proxyLoadBuffer.Sort((left, right) =>
+        {
+            int leftDistance = ProxyDistanceSq(left, center);
+            int rightDistance = ProxyDistanceSq(right, center);
+            if (leftDistance != rightDistance)
+            {
+                return leftDistance.CompareTo(rightDistance);
+            }
+
+            if (left.LodLevel != right.LodLevel)
+            {
+                return left.LodLevel.CompareTo(right.LodLevel);
+            }
+
+            if (left.Z != right.Z)
+            {
+                return left.Z.CompareTo(right.Z);
+            }
+
+            return left.X.CompareTo(right.X);
+        });
+
+        for (int i = 0; i < _proxyLoadBuffer.Count; i++)
+        {
+            EnqueueProxyLoad(_proxyLoadBuffer[i]);
+        }
+
         _coordBuffer.Clear();
         foreach (KeyValuePair<ChunkCoord, ChunkView> pair in _chunkViews)
         {
@@ -470,6 +632,51 @@ public sealed class WorldSystem : MonoBehaviour
         {
             EnqueueChunkUnload(_unloadBuffer[i]);
         }
+
+        _proxyCoordBuffer.Clear();
+        foreach (KeyValuePair<ProxyCoord, ProxyChunkView> pair in _proxyViews)
+        {
+            _proxyCoordBuffer.Add(pair.Key);
+        }
+
+        _proxyUnloadBuffer.Clear();
+        for (int i = 0; i < _proxyCoordBuffer.Count; i++)
+        {
+            ProxyCoord coord = _proxyCoordBuffer[i];
+            if (_desiredProxyCoords.Contains(coord))
+            {
+                continue;
+            }
+
+            _proxyUnloadBuffer.Add(coord);
+        }
+
+        _proxyUnloadBuffer.Sort((left, right) =>
+        {
+            int leftDistance = ProxyDistanceSq(left, center);
+            int rightDistance = ProxyDistanceSq(right, center);
+            if (leftDistance != rightDistance)
+            {
+                return rightDistance.CompareTo(leftDistance);
+            }
+
+            if (left.LodLevel != right.LodLevel)
+            {
+                return right.LodLevel.CompareTo(left.LodLevel);
+            }
+
+            if (left.Z != right.Z)
+            {
+                return right.Z.CompareTo(left.Z);
+            }
+
+            return right.X.CompareTo(left.X);
+        });
+
+        for (int i = 0; i < _proxyUnloadBuffer.Count; i++)
+        {
+            EnqueueProxyUnload(_proxyUnloadBuffer[i]);
+        }
     }
 
     private void EnqueueChunkLoad(ChunkCoord coord)
@@ -488,10 +695,28 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    private void ProcessQueuedOperations(int loadBudget, int unloadBudget)
+    private void EnqueueProxyLoad(ProxyCoord coord)
     {
+        if (_pendingProxyLoadSet.Add(coord))
+        {
+            _pendingProxyLoads.Enqueue(coord);
+        }
+    }
+
+    private void EnqueueProxyUnload(ProxyCoord coord)
+    {
+        if (_pendingProxyUnloadSet.Add(coord))
+        {
+            _pendingProxyUnloads.Enqueue(coord);
+        }
+    }
+
+    private void ProcessQueuedOperations()
+    {
+        int unloadBudget = Mathf.Max(0, _maxChunkUnloadsPerFrame);
         int unloaded = 0;
         _deferredUnloadBuffer.Clear();
+        _deferredProxyUnloadBuffer.Clear();
 
         while (unloaded < unloadBudget && _pendingChunkUnloads.Count > 0)
         {
@@ -513,13 +738,38 @@ public sealed class WorldSystem : MonoBehaviour
             unloaded++;
         }
 
+        while (unloaded < unloadBudget && _pendingProxyUnloads.Count > 0)
+        {
+            ProxyCoord coord = _pendingProxyUnloads.Dequeue();
+            _pendingProxyUnloadSet.Remove(coord);
+
+            if (_desiredProxyCoords.Contains(coord))
+            {
+                continue;
+            }
+
+            if (HasPendingJobsForProxy(coord))
+            {
+                _deferredProxyUnloadBuffer.Add(coord);
+                continue;
+            }
+
+            UnloadProxy(coord);
+            unloaded++;
+        }
+
         for (int i = 0; i < _deferredUnloadBuffer.Count; i++)
         {
             EnqueueChunkUnload(_deferredUnloadBuffer[i]);
         }
 
-        int loaded = 0;
-        while (loaded < loadBudget && _pendingChunkLoads.Count > 0)
+        for (int i = 0; i < _deferredProxyUnloadBuffer.Count; i++)
+        {
+            EnqueueProxyUnload(_deferredProxyUnloadBuffer[i]);
+        }
+
+        int lod0Budget = Mathf.Max(0, _maxLod0LoadsPerFrame);
+        while (lod0Budget > 0 && _pendingChunkLoads.Count > 0)
         {
             ChunkCoord coord = _pendingChunkLoads.Dequeue();
             _pendingLoadSet.Remove(coord);
@@ -530,6 +780,40 @@ public sealed class WorldSystem : MonoBehaviour
             }
 
             EnsureChunkAtDesiredLod(coord, desiredLod);
+            lod0Budget--;
+        }
+
+        ProcessProxyLoadQueue(LOD1, Mathf.Max(0, _maxProxy1LoadsPerFrame));
+        ProcessProxyLoadQueue(LOD2, Mathf.Max(0, _maxProxy2LoadsPerFrame));
+    }
+
+    private void ProcessProxyLoadQueue(int lodLevel, int budget)
+    {
+        if (budget <= 0 || _pendingProxyLoads.Count == 0)
+        {
+            return;
+        }
+
+        int attempts = _pendingProxyLoads.Count;
+        int loaded = 0;
+        while (attempts > 0 && loaded < budget && _pendingProxyLoads.Count > 0)
+        {
+            attempts--;
+            ProxyCoord coord = _pendingProxyLoads.Dequeue();
+            _pendingProxyLoadSet.Remove(coord);
+
+            if (coord.LodLevel != lodLevel)
+            {
+                EnqueueProxyLoad(coord);
+                continue;
+            }
+
+            if (!_desiredProxyCoords.Contains(coord))
+            {
+                continue;
+            }
+
+            EnsureProxyAtDesiredLod(coord);
             loaded++;
         }
     }
@@ -570,38 +854,47 @@ public sealed class WorldSystem : MonoBehaviour
             return;
         }
 
-        if (desiredLod == LOD0)
+        if (desiredLod != LOD0)
         {
-            if (!_chunkStore.Contains(coord))
-            {
-                GenerateChunk(coord);
-                return;
-            }
-
-            if (!_chunkStore.TryGet(coord, out ChunkData chunk))
-            {
-                return;
-            }
-
-            Transform root = _chunkRoot != null ? _chunkRoot : transform;
-            ChunkView view = _chunkViews.TryGetValue(coord, out ChunkView currentView)
-                ? currentView
-                : AcquireChunkView(coord, root);
-
-            _chunkViews[coord] = view;
-            ScheduleChunkLoadBuild(chunk, view, _applyMeshCollider);
             return;
         }
 
-        Transform chunkRoot = _chunkRoot != null ? _chunkRoot : transform;
-        bool hasExistingView = _chunkViews.TryGetValue(coord, out ChunkView lodView);
-        if (!hasExistingView)
+        if (!_chunkStore.Contains(coord))
         {
-            lodView = AcquireChunkView(coord, chunkRoot);
-            _chunkViews[coord] = lodView;
+            GenerateChunk(coord);
+            return;
         }
 
-        ScheduleLodChunkBuild(coord, lodView, desiredLod, false, !hasExistingView);
+        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+        {
+            return;
+        }
+
+        Transform root = _chunkRoot != null ? _chunkRoot : transform;
+        ChunkView view = _chunkViews.TryGetValue(coord, out ChunkView currentView)
+            ? currentView
+            : AcquireChunkView(coord, root);
+
+        _chunkViews[coord] = view;
+        ScheduleChunkLoadBuild(chunk, view, _applyMeshCollider);
+    }
+
+    private void EnsureProxyAtDesiredLod(ProxyCoord coord)
+    {
+        if (HasPendingJobsForProxy(coord))
+        {
+            return;
+        }
+
+        if (_proxyViews.ContainsKey(coord))
+        {
+            return;
+        }
+
+        Transform root = _chunkRoot != null ? _chunkRoot : transform;
+        ProxyChunkView view = AcquireProxyView(coord, root);
+        _proxyViews[coord] = view;
+        ScheduleProxyChunkBuild(coord, view);
     }
 
     private void ProcessCompletedGenerationJobs()
@@ -667,11 +960,18 @@ public sealed class WorldSystem : MonoBehaviour
         }
 
         _completedChunkMeshBuffer.Clear();
+        int applyBudget = Mathf.Max(0, _maxLod0AppliesPerFrame);
         foreach (KeyValuePair<ChunkCoord, PendingChunkMeshBuild> pair in _pendingChunkMeshBuilds)
         {
+            if (applyBudget <= 0)
+            {
+                break;
+            }
+
             if (TryAdvanceChunkMeshBuild(pair.Value))
             {
                 _completedChunkMeshBuffer.Add(pair.Key);
+                applyBudget--;
             }
         }
 
@@ -684,6 +984,48 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
+    private void ProcessCompletedProxyMeshBuilds()
+    {
+        if (_pendingProxyMeshBuilds.Count == 0)
+        {
+            return;
+        }
+
+        _completedProxyMeshBuffer.Clear();
+        int proxy1Budget = Mathf.Max(0, _maxProxy1AppliesPerFrame);
+        int proxy2Budget = Mathf.Max(0, _maxProxy2AppliesPerFrame);
+        foreach (KeyValuePair<ProxyCoord, PendingProxyMeshBuild> pair in _pendingProxyMeshBuilds)
+        {
+            PendingProxyMeshBuild build = pair.Value;
+            int budget = build.Coord.LodLevel == LOD1 ? proxy1Budget : proxy2Budget;
+            if (budget <= 0)
+            {
+                continue;
+            }
+
+            if (TryAdvanceProxyMeshBuild(build))
+            {
+                _completedProxyMeshBuffer.Add(pair.Key);
+                if (build.Coord.LodLevel == LOD1)
+                {
+                    proxy1Budget--;
+                }
+                else
+                {
+                    proxy2Budget--;
+                }
+            }
+        }
+
+        for (int i = 0; i < _completedProxyMeshBuffer.Count; i++)
+        {
+            ProxyCoord coord = _completedProxyMeshBuffer[i];
+            PendingProxyMeshBuild build = _pendingProxyMeshBuilds[coord];
+            _pendingProxyMeshBuilds.Remove(coord);
+            FinalizeProxyMeshBuild(build);
+        }
+    }
+
     private void UnloadChunk(ChunkCoord coord)
     {
         _chunkStore.RemoveAndDispose(coord);
@@ -693,6 +1035,15 @@ public sealed class WorldSystem : MonoBehaviour
         {
             _chunkViews.Remove(coord);
             ReleaseChunkView(view);
+        }
+    }
+
+    private void UnloadProxy(ProxyCoord coord)
+    {
+        if (_proxyViews.TryGetValue(coord, out ProxyChunkView view))
+        {
+            _proxyViews.Remove(coord);
+            ReleaseProxyView(view);
         }
     }
 
@@ -723,6 +1074,29 @@ public sealed class WorldSystem : MonoBehaviour
         return view;
     }
 
+    private ProxyChunkView AcquireProxyView(ProxyCoord coord, Transform root)
+    {
+        EnsureTerrainMaterialConfigured();
+
+        ProxyChunkView view;
+        if (_proxyViewPool.Count > 0)
+        {
+            view = _proxyViewPool.Pop();
+            view.transform.SetParent(root, false);
+            view.gameObject.SetActive(true);
+        }
+        else
+        {
+            GameObject go = new GameObject($"Proxy_L{coord.LodLevel}_{coord.X}_{coord.Z}");
+            go.transform.SetParent(root, false);
+            view = go.AddComponent<ProxyChunkView>();
+        }
+
+        view.SetProxyCoord(coord);
+        view.SetMaterial(_terrainMaterial);
+        return view;
+    }
+
     private void ReleaseChunkView(ChunkView view)
     {
         if (view == null)
@@ -743,7 +1117,44 @@ public sealed class WorldSystem : MonoBehaviour
         _chunkViewPool.Push(view);
     }
 
+    private void ReleaseProxyView(ProxyChunkView view)
+    {
+        if (view == null)
+        {
+            return;
+        }
+
+        view.ClearMesh();
+        view.gameObject.SetActive(false);
+
+        if (_proxyViewPool.Count >= MaxChunkViewPoolCount)
+        {
+            DestroyProxyView(view);
+            return;
+        }
+
+        view.transform.SetParent(_chunkRoot != null ? _chunkRoot : transform, false);
+        _proxyViewPool.Push(view);
+    }
+
     private void DestroyChunkView(ChunkView view)
+    {
+        if (view == null)
+        {
+            return;
+        }
+
+        if (Application.isPlaying)
+        {
+            Destroy(view.gameObject);
+        }
+        else
+        {
+            DestroyImmediate(view.gameObject);
+        }
+    }
+
+    private void DestroyProxyView(ProxyChunkView view)
     {
         if (view == null)
         {
@@ -1051,6 +1462,135 @@ public sealed class WorldSystem : MonoBehaviour
             {
                 _chunkStore.RemoveAndDispose(build.Coord);
             }
+        }
+        finally
+        {
+            build.Dispose();
+        }
+    }
+
+    private void ScheduleProxyChunkBuild(ProxyCoord coord, ProxyChunkView view)
+    {
+        int horizontalStep = GetHorizontalStepForLod(coord.LodLevel);
+        int regionChunkSpan = GetProxyChunkSpanForLod(coord.LodLevel);
+        int cellsX = (WorldConstants.ChunkSizeX * regionChunkSpan) / horizontalStep;
+        int cellsZ = (WorldConstants.ChunkSizeZ * regionChunkSpan) / horizontalStep;
+        int cellCount = cellsX * WorldConstants.ChunkSizeY * cellsZ;
+
+        PendingProxyMeshBuild build = new PendingProxyMeshBuild
+        {
+            Coord = coord,
+            View = view,
+            TriangleCounts = new NativeArray<byte>(cellCount, Allocator.Persistent),
+            TriangleOffsets = new NativeArray<int>(cellCount, Allocator.Persistent)
+        };
+
+        LodProxyTriangleCountJob countJob = new LodProxyTriangleCountJob
+        {
+            OriginChunkX = coord.X,
+            OriginChunkZ = coord.Z,
+            Settings = _generationSettings,
+            HorizontalStep = horizontalStep,
+            RegionChunkSpan = regionChunkSpan,
+            CellsX = cellsX,
+            CellsZ = cellsZ,
+            TriangleCounts = build.TriangleCounts
+        };
+
+        build.Handle = countJob.Schedule(cellCount, 128);
+        _pendingProxyMeshBuilds[coord] = build;
+        view.gameObject.SetActive(false);
+    }
+
+    private bool TryAdvanceProxyMeshBuild(PendingProxyMeshBuild build)
+    {
+        if (!build.Handle.IsCompleted)
+        {
+            return false;
+        }
+
+        build.Handle.Complete();
+
+        int horizontalStep = GetHorizontalStepForLod(build.Coord.LodLevel);
+        int regionChunkSpan = GetProxyChunkSpanForLod(build.Coord.LodLevel);
+        int cellsX = (WorldConstants.ChunkSizeX * regionChunkSpan) / horizontalStep;
+        int cellsZ = (WorldConstants.ChunkSizeZ * regionChunkSpan) / horizontalStep;
+        int cellCount = cellsX * WorldConstants.ChunkSizeY * cellsZ;
+
+        if (!build.WriteScheduled)
+        {
+            int totalTriangles = SubChunkTrianglePrefixSum.Build(build.TriangleCounts, build.TriangleOffsets);
+            if (totalTriangles == 0)
+            {
+                return true;
+            }
+
+            build.MeshData = new SubChunkMeshData(totalTriangles, Allocator.Persistent);
+
+            LodProxyMeshWriteJob writeJob = new LodProxyMeshWriteJob
+            {
+                OriginChunkX = build.Coord.X,
+                OriginChunkZ = build.Coord.Z,
+                Settings = _generationSettings,
+                HorizontalStep = horizontalStep,
+                RegionChunkSpan = regionChunkSpan,
+                CellsX = cellsX,
+                CellsZ = cellsZ,
+                BlendDeadZoneMin = BlendDeadZoneMin,
+                BlendDeadZoneMax = BlendDeadZoneMax,
+                TriangleCounts = build.TriangleCounts,
+                TriangleOffsets = build.TriangleOffsets,
+                Vertices = build.MeshData.Vertices,
+                Normals = build.MeshData.Normals,
+                Indices = build.MeshData.Indices,
+                MaterialInfo = build.MeshData.MaterialInfo
+            };
+
+            build.Handle = writeJob.Schedule(cellCount, 128);
+            build.WriteScheduled = true;
+            return false;
+        }
+
+        return true;
+    }
+
+    private void FinalizeProxyMeshBuild(PendingProxyMeshBuild build)
+    {
+        try
+        {
+            bool isDesired = _desiredProxyCoords.Contains(build.Coord);
+            bool hasView = _proxyViews.TryGetValue(build.Coord, out ProxyChunkView currentView);
+            bool shouldApply = isDesired && hasView && currentView == build.View;
+
+            if (!shouldApply)
+            {
+                if (hasView && currentView == build.View && !isDesired)
+                {
+                    _proxyViews.Remove(build.Coord);
+                    ReleaseProxyView(currentView);
+                }
+
+                if (isDesired && (!hasView || currentView != build.View))
+                {
+                    EnqueueProxyLoad(build.Coord);
+                }
+
+                return;
+            }
+
+            if (build.MeshData != null &&
+                build.MeshData.IsCreated &&
+                build.MeshData.Vertices.Length > 0 &&
+                build.MeshData.Indices.Length > 0)
+            {
+                MeshApplyUtility.ApplyToProxy(build.View, build.MeshData);
+            }
+            else
+            {
+                build.View.ClearMesh();
+            }
+
+            build.View.gameObject.SetActive(true);
         }
         finally
         {
@@ -1543,6 +2083,14 @@ public sealed class WorldSystem : MonoBehaviour
         }
 
         _pendingChunkMeshBuilds.Clear();
+
+        foreach (PendingProxyMeshBuild build in _pendingProxyMeshBuilds.Values)
+        {
+            build.Handle.Complete();
+            build.Dispose();
+        }
+
+        _pendingProxyMeshBuilds.Clear();
     }
 
     private bool HasPendingJobsForChunk(ChunkCoord coord)
@@ -1550,24 +2098,9 @@ public sealed class WorldSystem : MonoBehaviour
         return _pendingGenerations.ContainsKey(coord) || _pendingChunkMeshBuilds.ContainsKey(coord);
     }
 
-    private static int ResolveDesiredLod(int distance, int baseRadius)
+    private bool HasPendingJobsForProxy(ProxyCoord coord)
     {
-        if (distance <= baseRadius)
-        {
-            return LOD0;
-        }
-
-        if (distance <= baseRadius * 2)
-        {
-            return LOD1;
-        }
-
-        if (distance <= baseRadius * 3)
-        {
-            return LOD2;
-        }
-
-        return -1;
+        return _pendingProxyMeshBuilds.ContainsKey(coord);
     }
 
     private static int GetHorizontalStepForLod(int lodLevel)
@@ -1583,10 +2116,253 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
+    private static int GetProxyChunkSpanForLod(int lodLevel)
+    {
+        switch (lodLevel)
+        {
+            case LOD1:
+                return 2;
+            case LOD2:
+                return 4;
+            default:
+                return 1;
+        }
+    }
+
+    private void GetBaseChunkRect(ChunkCoord center, out int minChunkX, out int maxChunkXExclusive, out int minChunkZ, out int maxChunkZExclusive)
+    {
+        int diameter = BaseChunkDiameter;
+        int half = diameter / 2;
+        minChunkX = WorldMath.AlignDown(center.X - half, 4);
+        minChunkZ = WorldMath.AlignDown(center.Z - half, 4);
+        maxChunkXExclusive = minChunkX + diameter;
+        maxChunkZExclusive = minChunkZ + diameter;
+    }
+
+    public bool TryGetLodBoundaryRect(LodBoundaryKind kind, out int minChunkX, out int maxChunkXExclusive, out int minChunkZ, out int maxChunkZExclusive)
+    {
+        minChunkX = 0;
+        maxChunkXExclusive = 0;
+        minChunkZ = 0;
+        maxChunkZExclusive = 0;
+
+        if (!_hasStreamingCenter)
+        {
+            return false;
+        }
+
+        GetBaseChunkRect(_streamingCenter, out int baseMinX, out int baseMaxX, out int baseMinZ, out int baseMaxZ);
+        int proxy1MinX = baseMinX - Proxy1Border;
+        int proxy1MaxX = baseMaxX + Proxy1Border;
+        int proxy1MinZ = baseMinZ - Proxy1Border;
+        int proxy1MaxZ = baseMaxZ + Proxy1Border;
+        int proxy2MinX = proxy1MinX - Proxy2Border;
+        int proxy2MaxX = proxy1MaxX + Proxy2Border;
+        int proxy2MinZ = proxy1MinZ - Proxy2Border;
+        int proxy2MaxZ = proxy1MaxZ + Proxy2Border;
+
+        switch (kind)
+        {
+            case LodBoundaryKind.Lod0Outer:
+                minChunkX = baseMinX;
+                maxChunkXExclusive = baseMaxX;
+                minChunkZ = baseMinZ;
+                maxChunkZExclusive = baseMaxZ;
+                return true;
+            case LodBoundaryKind.Lod1Outer:
+                minChunkX = proxy1MinX;
+                maxChunkXExclusive = proxy1MaxX;
+                minChunkZ = proxy1MinZ;
+                maxChunkZExclusive = proxy1MaxZ;
+                return true;
+            case LodBoundaryKind.Lod2Outer:
+                minChunkX = proxy2MinX;
+                maxChunkXExclusive = proxy2MaxX;
+                minChunkZ = proxy2MinZ;
+                maxChunkZExclusive = proxy2MaxZ;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void AddDesiredProxies(
+        int lodLevel,
+        int alignment,
+        int outerMinX,
+        int outerMaxX,
+        int outerMinZ,
+        int outerMaxZ,
+        int innerMinX,
+        int innerMaxX,
+        int innerMinZ,
+        int innerMaxZ)
+    {
+        int span = GetProxyChunkSpanForLod(lodLevel);
+        int iterMinX = WorldMath.AlignDown(outerMinX, alignment);
+        int iterMaxX = WorldMath.AlignUp(outerMaxX, alignment);
+        int iterMinZ = WorldMath.AlignDown(outerMinZ, alignment);
+        int iterMaxZ = WorldMath.AlignUp(outerMaxZ, alignment);
+
+        for (int z = iterMinZ; z < iterMaxZ; z += alignment)
+        {
+            for (int x = iterMinX; x < iterMaxX; x += alignment)
+            {
+                int proxyMaxX = x + span;
+                int proxyMaxZ = z + span;
+                bool intersectsOuter = RectsIntersect(x, proxyMaxX, z, proxyMaxZ, outerMinX, outerMaxX, outerMinZ, outerMaxZ);
+                bool intersectsInner = RectsIntersect(x, proxyMaxX, z, proxyMaxZ, innerMinX, innerMaxX, innerMinZ, innerMaxZ);
+
+                if (!intersectsOuter || intersectsInner)
+                {
+                    continue;
+                }
+
+                _desiredProxyCoords.Add(new ProxyCoord(x, z, lodLevel));
+            }
+        }
+    }
+
+    private void AdvanceInitialStreamingPhase()
+    {
+        if (!_hasStreamingCenter)
+        {
+            return;
+        }
+
+        if (_initialStreamingPhase == InitialStreamingPhase.Lod0Only && AreAllDesiredLod0ViewsReady())
+        {
+            _initialStreamingPhase = InitialStreamingPhase.Proxy1;
+            RefreshDesiredChunkSet(_streamingCenter);
+            return;
+        }
+
+        if (_initialStreamingPhase == InitialStreamingPhase.Proxy1 && AreAllDesiredProxyViewsReady(LOD1))
+        {
+            _initialStreamingPhase = InitialStreamingPhase.Proxy2;
+            RefreshDesiredChunkSet(_streamingCenter);
+            return;
+        }
+
+        if (_initialStreamingPhase == InitialStreamingPhase.Proxy2 && AreAllDesiredProxyViewsReady(LOD2))
+        {
+            _initialStreamingPhase = InitialStreamingPhase.Complete;
+        }
+    }
+
+    private bool IsProxyLoadAllowedInCurrentPhase(int lodLevel)
+    {
+        return _initialStreamingPhase switch
+        {
+            InitialStreamingPhase.Lod0Only => false,
+            InitialStreamingPhase.Proxy1 => lodLevel == LOD1,
+            _ => true
+        };
+    }
+
+    private bool AreAllDesiredLod0ViewsReady()
+    {
+        if (_pendingChunkLoads.Count > 0 || _pendingGenerations.Count > 0 || _pendingChunkMeshBuilds.Count > 0)
+        {
+            return false;
+        }
+
+        foreach (ChunkCoord coord in _desiredChunkCoords)
+        {
+            if (!_chunkViews.ContainsKey(coord))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool AreAllDesiredProxyViewsReady(int lodLevel)
+    {
+        if (HasPendingProxyWork(lodLevel))
+        {
+            return false;
+        }
+
+        foreach (ProxyCoord coord in _desiredProxyCoords)
+        {
+            if (coord.LodLevel != lodLevel)
+            {
+                continue;
+            }
+
+            if (!_proxyViews.ContainsKey(coord))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool HasPendingProxyWork(int lodLevel)
+    {
+        foreach (ProxyCoord coord in _pendingProxyLoadSet)
+        {
+            if (coord.LodLevel == lodLevel)
+            {
+                return true;
+            }
+        }
+
+        foreach (KeyValuePair<ProxyCoord, PendingProxyMeshBuild> pair in _pendingProxyMeshBuilds)
+        {
+            if (pair.Key.LodLevel == lodLevel)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RectsIntersect(
+        int minAx,
+        int maxAx,
+        int minAz,
+        int maxAz,
+        int minBx,
+        int maxBx,
+        int minBz,
+        int maxBz)
+    {
+        return minAx < maxBx && maxAx > minBx && minAz < maxBz && maxAz > minBz;
+    }
+
     private static int ChunkDistanceSq(ChunkCoord coord, ChunkCoord center)
     {
         int dx = coord.X - center.X;
         int dz = coord.Z - center.Z;
         return dx * dx + dz * dz;
+    }
+
+    private static int ProxyDistanceSq(ProxyCoord coord, ChunkCoord center)
+    {
+        int span = GetProxyChunkSpanForLod(coord.LodLevel);
+        int proxyCenterX = coord.X + span / 2;
+        int proxyCenterZ = coord.Z + span / 2;
+        int dx = proxyCenterX - center.X;
+        int dz = proxyCenterZ - center.Z;
+        return dx * dx + dz * dz;
+    }
+
+    private static int SanitizePositiveMultiple(int value, int multiple)
+    {
+        int clamped = Mathf.Max(multiple, value);
+        int remainder = clamped % multiple;
+        return remainder == 0 ? clamped : clamped + (multiple - remainder);
+    }
+
+    public enum LodBoundaryKind
+    {
+        Lod0Outer = 0,
+        Lod1Outer = 1,
+        Lod2Outer = 2
     }
 }

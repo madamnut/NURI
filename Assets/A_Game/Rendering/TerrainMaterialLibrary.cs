@@ -12,30 +12,31 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
 
     [SerializeField] private TerrainMaterialDefinition[] _materials = Array.Empty<TerrainMaterialDefinition>();
 
+    [Header("Bake Settings")]
+    [SerializeField, Min(1)] private int _baseMapDownscale = 1;
+    [SerializeField, Min(1)] private int _maskMapDownscale = 2;
+    [SerializeField] private bool _baseMapMipChain = true;
+    [SerializeField] private bool _maskMapMipChain = false;
+
     [Header("Baked Arrays")]
     [SerializeField, HideInInspector] private Texture2DArray _baseMapArray;
-    [SerializeField, HideInInspector] private Texture2DArray _normalMapArray;
-    [SerializeField, HideInInspector] private Texture2DArray _roughnessMapArray;
-    [SerializeField, HideInInspector] private Texture2DArray _aoMapArray;
-    [SerializeField, HideInInspector] private Texture2DArray _heightMapArray;
+    [SerializeField, HideInInspector] private Texture2DArray _maskMapArray;
     [SerializeField, HideInInspector] private Vector4[] _materialBaseColors = Array.Empty<Vector4>();
     [SerializeField, HideInInspector] private int _materialCount;
 
     public bool HasBakedResources =>
         _materialCount > 0 &&
         _baseMapArray != null &&
-        _normalMapArray != null &&
-        _roughnessMapArray != null &&
-        _aoMapArray != null &&
-        _heightMapArray != null &&
+        _maskMapArray != null &&
         _materialBaseColors != null &&
         _materialBaseColors.Length == _materialCount;
 
     public Texture2DArray BaseMapArray => _baseMapArray;
-    public Texture2DArray NormalMapArray => _normalMapArray;
-    public Texture2DArray RoughnessMapArray => _roughnessMapArray;
-    public Texture2DArray AOMapArray => _aoMapArray;
-    public Texture2DArray HeightMapArray => _heightMapArray;
+    public Texture2DArray MaskMapArray => _maskMapArray;
+    public int BaseMapDownscale => Mathf.Max(1, _baseMapDownscale);
+    public int MaskMapDownscale => Mathf.Max(1, _maskMapDownscale);
+    public bool BaseMapMipChain => _baseMapMipChain;
+    public bool MaskMapMipChain => _maskMapMipChain;
 
     public string GetDisplayName(byte materialId)
     {
@@ -70,10 +71,7 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
         }
 
         targetMaterial.SetTexture("_BaseMapArray", _baseMapArray);
-        targetMaterial.SetTexture("_NormalMapArray", _normalMapArray);
-        targetMaterial.SetTexture("_RoughnessMapArray", _roughnessMapArray);
-        targetMaterial.SetTexture("_AOMapArray", _aoMapArray);
-        targetMaterial.SetTexture("_HeightMapArray", _heightMapArray);
+        targetMaterial.SetTexture("_MaskMapArray", _maskMapArray);
         targetMaterial.SetInt("_MaterialCount", _materialCount);
         targetMaterial.SetVectorArray("_MaterialBaseColors", _materialBaseColors);
         return true;
@@ -149,18 +147,12 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
 
     public void SetBakedResources(
         Texture2DArray baseMapArray,
-        Texture2DArray normalMapArray,
-        Texture2DArray roughnessMapArray,
-        Texture2DArray aoMapArray,
-        Texture2DArray heightMapArray,
+        Texture2DArray maskMapArray,
         Vector4[] materialBaseColors,
         int materialCount)
     {
         _baseMapArray = baseMapArray;
-        _normalMapArray = normalMapArray;
-        _roughnessMapArray = roughnessMapArray;
-        _aoMapArray = aoMapArray;
-        _heightMapArray = heightMapArray;
+        _maskMapArray = maskMapArray;
         _materialBaseColors = materialBaseColors ?? Array.Empty<Vector4>();
         _materialCount = materialCount;
     }
@@ -168,10 +160,7 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
     public void ClearBakedResources()
     {
         _baseMapArray = null;
-        _normalMapArray = null;
-        _roughnessMapArray = null;
-        _aoMapArray = null;
-        _heightMapArray = null;
+        _maskMapArray = null;
         _materialBaseColors = Array.Empty<Vector4>();
         _materialCount = 0;
     }
@@ -179,6 +168,8 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
     public static Texture2DArray CreateTextureArray(
         TerrainMaterialDefinition[] definitions,
         Func<TerrainMaterialDefinition, Texture2D> selector,
+        int downscale,
+        bool mipChain,
         bool linear,
         string label)
     {
@@ -189,7 +180,9 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
         }
 
         int sliceCount = definitions.Length;
-        Texture2DArray array = new Texture2DArray(reference.width, reference.height, sliceCount, TextureFormat.RGBA32, true, linear)
+        int width = Mathf.Max(1, reference.width / Mathf.Max(1, downscale));
+        int height = Mathf.Max(1, reference.height / Mathf.Max(1, downscale));
+        Texture2DArray array = new Texture2DArray(width, height, sliceCount, TextureFormat.RGB24, mipChain, linear)
         {
             wrapMode = reference.wrapMode,
             filterMode = reference.filterMode,
@@ -200,11 +193,60 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
         {
             Texture2D source = selector(definitions[sliceIndex]);
             ValidateTextureCompatibility(source, reference, label, sliceIndex + 1);
-            Color[] pixels = ReadTexturePixels(source, reference.width, reference.height, linear);
+            Color[] pixels = ReadTexturePixels(source, width, height, linear);
             array.SetPixels(pixels, sliceIndex, 0);
         }
 
-        array.Apply(true, false);
+        array.Apply(mipChain, false);
+        return array;
+    }
+
+    public static Texture2DArray CreatePackedMaskArray(
+        TerrainMaterialDefinition[] definitions,
+        int downscale,
+        bool mipChain)
+    {
+        Texture2D reference = definitions[0].RoughnessMap;
+        if (reference == null)
+        {
+            throw new InvalidOperationException("Mask reference texture is missing.");
+        }
+
+        int sliceCount = definitions.Length;
+        int width = Mathf.Max(1, reference.width / Mathf.Max(1, downscale));
+        int height = Mathf.Max(1, reference.height / Mathf.Max(1, downscale));
+        Texture2DArray array = new Texture2DArray(width, height, sliceCount, TextureFormat.RGB24, mipChain, true)
+        {
+            wrapMode = reference.wrapMode,
+            filterMode = reference.filterMode,
+            anisoLevel = reference.anisoLevel
+        };
+
+        for (int sliceIndex = 0; sliceIndex < sliceCount; sliceIndex++)
+        {
+            TerrainMaterialDefinition definition = definitions[sliceIndex];
+            ValidateTextureCompatibility(definition.RoughnessMap, reference, "RoughnessMap", sliceIndex + 1);
+            ValidateTextureCompatibility(definition.AOMap, reference, "AOMap", sliceIndex + 1);
+            ValidateTextureCompatibility(definition.HeightMap, reference, "HeightMap", sliceIndex + 1);
+
+            Color[] roughnessPixels = ReadTexturePixels(definition.RoughnessMap, width, height, true);
+            Color[] aoPixels = ReadTexturePixels(definition.AOMap, width, height, true);
+            Color[] heightPixels = ReadTexturePixels(definition.HeightMap, width, height, true);
+            Color[] packedPixels = new Color[roughnessPixels.Length];
+
+            for (int pixelIndex = 0; pixelIndex < packedPixels.Length; pixelIndex++)
+            {
+                packedPixels[pixelIndex] = new Color(
+                    aoPixels[pixelIndex].r,
+                    roughnessPixels[pixelIndex].r,
+                    heightPixels[pixelIndex].r,
+                    1f);
+            }
+
+            array.SetPixels(packedPixels, sliceIndex, 0);
+        }
+
+        array.Apply(mipChain, false);
         return array;
     }
 
@@ -267,14 +309,12 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
         public string DisplayName = "Material";
         public Color BaseColor = Color.white;
         public Texture2D BaseMap;
-        public Texture2D NormalMap;
         public Texture2D RoughnessMap;
         public Texture2D AOMap;
         public Texture2D HeightMap;
 
         public bool IsComplete =>
             BaseMap != null &&
-            NormalMap != null &&
             RoughnessMap != null &&
             AOMap != null &&
             HeightMap != null;

@@ -144,4 +144,14 @@ public static class WorldMath
         int remainder = value % divisor;
         return remainder < 0 ? remainder + divisor : remainder;
     }
+
+    public static int AlignDown(int value, int alignment)
+    {
+        return FloorDiv(value, alignment) * alignment;
+    }
+
+    public static int AlignUp(int value, int alignment)
+    {
+        return FloorDiv(value + alignment - 1, alignment) * alignment;
+    }
 }

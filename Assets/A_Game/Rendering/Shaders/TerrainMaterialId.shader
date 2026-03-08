@@ -3,10 +3,7 @@ Shader "A_Game/Terrain Material Id"
     Properties
     {
         [NoScaleOffset] _BaseMapArray("Base Map Array", 2DArray) = "" {}
-        [NoScaleOffset] _NormalMapArray("Normal Map Array", 2DArray) = "" {}
-        [NoScaleOffset] _RoughnessMapArray("Roughness Map Array", 2DArray) = "" {}
-        [NoScaleOffset] _AOMapArray("AO Map Array", 2DArray) = "" {}
-        [NoScaleOffset] _HeightMapArray("Height Map Array", 2DArray) = "" {}
+        [NoScaleOffset] _MaskMapArray("Mask Map Array", 2DArray) = "" {}
 
         _MaterialCount("Material Count", Float) = 1
         _Tiling("Tiling", Float) = 0.2
@@ -92,14 +89,8 @@ Shader "A_Game/Terrain Material Id"
 
             TEXTURE2D_ARRAY(_BaseMapArray);
             SAMPLER(sampler_BaseMapArray);
-            TEXTURE2D_ARRAY(_NormalMapArray);
-            SAMPLER(sampler_NormalMapArray);
-            TEXTURE2D_ARRAY(_RoughnessMapArray);
-            SAMPLER(sampler_RoughnessMapArray);
-            TEXTURE2D_ARRAY(_AOMapArray);
-            SAMPLER(sampler_AOMapArray);
-            TEXTURE2D_ARRAY(_HeightMapArray);
-            SAMPLER(sampler_HeightMapArray);
+            TEXTURE2D_ARRAY(_MaskMapArray);
+            SAMPLER(sampler_MaskMapArray);
 
             struct Attributes
             {
@@ -154,16 +145,19 @@ Shader "A_Game/Terrain Material Id"
 
                 worldNormal = geometryNormalWS;
 
-                half roughnessX = SAMPLE_TEXTURE2D_ARRAY(_RoughnessMapArray, sampler_RoughnessMapArray, uvX, slice).r;
-                half roughnessY = SAMPLE_TEXTURE2D_ARRAY(_RoughnessMapArray, sampler_RoughnessMapArray, uvY, slice).r;
-                half roughnessZ = SAMPLE_TEXTURE2D_ARRAY(_RoughnessMapArray, sampler_RoughnessMapArray, uvZ, slice).r;
+                half4 maskX = SAMPLE_TEXTURE2D_ARRAY(_MaskMapArray, sampler_MaskMapArray, uvX, slice);
+                half4 maskY = SAMPLE_TEXTURE2D_ARRAY(_MaskMapArray, sampler_MaskMapArray, uvY, slice);
+                half4 maskZ = SAMPLE_TEXTURE2D_ARRAY(_MaskMapArray, sampler_MaskMapArray, uvZ, slice);
+                half roughnessX = maskX.g;
+                half roughnessY = maskY.g;
+                half roughnessZ = maskZ.g;
                 half roughness = roughnessX * weights.x + roughnessY * weights.y + roughnessZ * weights.z;
                 roughness = lerp(0.8h, roughness, saturate(_RoughnessStrength));
                 smoothness = saturate((1.0h - roughness) * 0.1h);
 
-                half aoX = SAMPLE_TEXTURE2D_ARRAY(_AOMapArray, sampler_AOMapArray, uvX, slice).r;
-                half aoY = SAMPLE_TEXTURE2D_ARRAY(_AOMapArray, sampler_AOMapArray, uvY, slice).r;
-                half aoZ = SAMPLE_TEXTURE2D_ARRAY(_AOMapArray, sampler_AOMapArray, uvZ, slice).r;
+                half aoX = maskX.r;
+                half aoY = maskY.r;
+                half aoZ = maskZ.r;
                 half ambientOcclusion = aoX * weights.x + aoY * weights.y + aoZ * weights.z;
                 occlusion = lerp(1.0h, ambientOcclusion, saturate(_AOStrength));
             }

@@ -356,37 +356,36 @@ public sealed class WorldDebugUI : MonoBehaviour
 
     private void DrawLodBoundary()
     {
-        if (_worldSystem == null || !_worldSystem.TryGetStreamingCenter(out ChunkCoord centerCoord))
+        if (_worldSystem == null)
         {
             return;
         }
 
-        int baseRadius = _worldSystem.LoadRadius;
-        int chunkRadius;
+        WorldSystem.LodBoundaryKind boundaryKind;
         Color color;
 
         switch (_lodBoundaryMode)
         {
             case LodBoundaryDisplayMode.Lod0ToLod1:
-                chunkRadius = baseRadius;
+                boundaryKind = WorldSystem.LodBoundaryKind.Lod0Outer;
                 color = _lod0ToLod1BoundsColor;
                 break;
             case LodBoundaryDisplayMode.Lod1ToLod2:
-                chunkRadius = baseRadius * 2;
+                boundaryKind = WorldSystem.LodBoundaryKind.Lod1Outer;
                 color = _lod1ToLod2BoundsColor;
                 break;
             case LodBoundaryDisplayMode.Lod2OuterEdge:
-                chunkRadius = baseRadius * 3;
+                boundaryKind = WorldSystem.LodBoundaryKind.Lod2Outer;
                 color = _lod2OuterBoundsColor;
                 break;
             default:
                 return;
         }
 
-        int minChunkX = centerCoord.X - chunkRadius;
-        int maxChunkXExclusive = centerCoord.X + chunkRadius + 1;
-        int minChunkZ = centerCoord.Z - chunkRadius;
-        int maxChunkZExclusive = centerCoord.Z + chunkRadius + 1;
+        if (!_worldSystem.TryGetLodBoundaryRect(boundaryKind, out int minChunkX, out int maxChunkXExclusive, out int minChunkZ, out int maxChunkZExclusive))
+        {
+            return;
+        }
 
         int worldMinX = minChunkX * WorldConstants.ChunkSizeX;
         int worldMaxX = maxChunkXExclusive * WorldConstants.ChunkSizeX;

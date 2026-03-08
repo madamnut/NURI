@@ -46,4 +46,26 @@ public static class MeshApplyUtility
 
         view.MeshCollider.sharedMesh = mesh;
     }
+
+    public static void ApplyToProxy(ProxyChunkView view, SubChunkMeshData meshData)
+    {
+        Mesh mesh = view.EnsureMeshCreated();
+
+        if (!meshData.IsCreated || meshData.Vertices.Length == 0 || meshData.Indices.Length == 0)
+        {
+            view.ClearMesh();
+            return;
+        }
+
+        mesh.Clear();
+        mesh.SetVertexBufferParams(meshData.Vertices.Length, VertexLayout);
+        mesh.SetVertexBufferData(meshData.Vertices.Reinterpret<Vector3>(UnsafeUtility.SizeOf<float3>()), 0, 0, meshData.Vertices.Length, 0, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetVertexBufferData(meshData.Normals.Reinterpret<Vector3>(UnsafeUtility.SizeOf<float3>()), 0, 0, meshData.Normals.Length, 1, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetVertexBufferData(meshData.MaterialInfo.Reinterpret<Vector4>(UnsafeUtility.SizeOf<float4>()), 0, 0, meshData.MaterialInfo.Length, 2, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetIndexBufferParams(meshData.Indices.Length, IndexFormat.UInt32);
+        mesh.SetIndexBufferData(meshData.Indices, 0, 0, meshData.Indices.Length, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.subMeshCount = 1;
+        mesh.SetSubMesh(0, new SubMeshDescriptor(0, meshData.Indices.Length, MeshTopology.Triangles), MeshUpdateFlags.DontRecalculateBounds);
+        mesh.RecalculateBounds();
+    }
 }
