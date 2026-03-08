@@ -13,6 +13,7 @@ public sealed class WorldDebugUI : MonoBehaviour
     [Header("References")]
     [SerializeField] private WorldSystem _worldSystem;
     [SerializeField] private Camera _referenceCamera;
+    [SerializeField] private VoxelEditController _voxelEditController;
     [SerializeField] private GameObject _debugRoot;
     [SerializeField] private TMP_Text _targetText;
 
@@ -34,6 +35,7 @@ public sealed class WorldDebugUI : MonoBehaviour
     private bool _consumedF3Chord;
     private Material _surfaceMaterial;
     private Mesh _quadMesh;
+    private string _currentTargetLabel = "Target: Air";
 
     private void Awake()
     {
@@ -61,6 +63,9 @@ public sealed class WorldDebugUI : MonoBehaviour
             return;
         }
 
+        _currentTargetLabel = BuildTargetLabel();
+        UpdateDisplayedText();
+
         _frameCount++;
         _elapsedTime += Time.unscaledDeltaTime;
 
@@ -69,7 +74,7 @@ public sealed class WorldDebugUI : MonoBehaviour
             _currentFps = Mathf.RoundToInt(_frameCount / _elapsedTime);
             _frameCount = 0;
             _elapsedTime = 0f;
-            RefreshText();
+            UpdateDisplayedText();
         }
     }
 
@@ -134,16 +139,68 @@ public sealed class WorldDebugUI : MonoBehaviour
 
     private void RefreshText()
     {
+        _currentTargetLabel = BuildTargetLabel();
+        UpdateDisplayedText();
+    }
+
+    private void UpdateDisplayedText()
+    {
         if (_targetText == null)
         {
             return;
         }
 
         int loadedChunks = _worldSystem != null ? _worldSystem.LoadedChunkCount : 0;
+        int pendingLoads = _worldSystem != null ? _worldSystem.PendingChunkLoadCount : 0;
+        int pendingGenerations = _worldSystem != null ? _worldSystem.PendingGenerationCount : 0;
+        int pendingMeshBuilds = _worldSystem != null ? _worldSystem.PendingMeshBuildCount : 0;
+        int pendingUnloads = _worldSystem != null ? _worldSystem.PendingChunkUnloadCount : 0;
+        int pooledViews = _worldSystem != null ? _worldSystem.PooledChunkViewCount : 0;
         _targetText.text =
             $"FPS: {_currentFps}\n" +
             $"LoadedChunks: {loadedChunks}\n" +
+            $"QueuedLoads: {pendingLoads}\n" +
+            $"PendingGenerations: {pendingGenerations}\n" +
+            $"PendingMeshBuilds: {pendingMeshBuilds}\n" +
+            $"PendingUnloads: {pendingUnloads}\n" +
+            $"PooledViews: {pooledViews}\n" +
+            $"{_currentTargetLabel}\n" +
             $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}";
+    }
+
+    private string BuildTargetLabel()
+    {
+        Camera targetCamera = _referenceCamera != null ? _referenceCamera : Camera.main;
+        if (_worldSystem == null || targetCamera == null)
+        {
+            return "Target: Air";
+        }
+
+        float maxDistance = _voxelEditController != null ? _voxelEditController.MaxRayDistance : 500f;
+        LayerMask hitMask = _voxelEditController != null ? _voxelEditController.HitMask : ~0;
+
+        Ray ray = targetCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+        if (!Physics.Raycast(ray, out RaycastHit hit, Mathf.Max(0.1f, maxDistance), hitMask, QueryTriggerInteraction.Ignore))
+        {
+            return "Target: Air";
+        }
+
+        Vector3 insidePoint = hit.point - hit.normal * 0.01f;
+        int cellX = Mathf.FloorToInt(insidePoint.x);
+        int cellY = Mathf.FloorToInt(insidePoint.y);
+        int cellZ = Mathf.FloorToInt(insidePoint.z);
+
+        if (!_worldSystem.TryGetWorldCellMaterial(cellX, cellY, cellZ, out byte materialId) || materialId == 0)
+        {
+            return "Target: Air";
+        }
+
+        TerrainMaterialLibrary materialLibrary = _worldSystem.TerrainMaterialLibrary;
+        string materialName = materialLibrary != null
+            ? materialLibrary.GetDisplayName(materialId)
+            : $"Material {materialId}";
+
+        return $"Target: {materialName} (ID: {materialId})";
     }
 
     private void HandleDebugShortcuts()

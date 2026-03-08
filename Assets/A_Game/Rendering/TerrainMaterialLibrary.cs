@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// material id 기반 지형 재질 정의를 모아두고, 런타임에 Texture2DArray 세트를 빌드한다.
+/// material id 기반 지형 재질 정의와 prebaked Texture2DArray 세트를 보관한다.
 /// </summary>
 [CreateAssetMenu(fileName = "TerrainMaterialLibrary", menuName = "A_Game/Terrain Material Library")]
 public sealed class TerrainMaterialLibrary : ScriptableObject
@@ -12,9 +12,77 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
 
     [SerializeField] private TerrainMaterialDefinition[] _materials = Array.Empty<TerrainMaterialDefinition>();
 
-    public bool TryBuildRuntimeResources(out RuntimeResources resources, out string error)
+    [Header("Baked Arrays")]
+    [SerializeField, HideInInspector] private Texture2DArray _baseMapArray;
+    [SerializeField, HideInInspector] private Texture2DArray _normalMapArray;
+    [SerializeField, HideInInspector] private Texture2DArray _roughnessMapArray;
+    [SerializeField, HideInInspector] private Texture2DArray _aoMapArray;
+    [SerializeField, HideInInspector] private Texture2DArray _heightMapArray;
+    [SerializeField, HideInInspector] private Vector4[] _materialBaseColors = Array.Empty<Vector4>();
+    [SerializeField, HideInInspector] private int _materialCount;
+
+    public bool HasBakedResources =>
+        _materialCount > 0 &&
+        _baseMapArray != null &&
+        _normalMapArray != null &&
+        _roughnessMapArray != null &&
+        _aoMapArray != null &&
+        _heightMapArray != null &&
+        _materialBaseColors != null &&
+        _materialBaseColors.Length == _materialCount;
+
+    public Texture2DArray BaseMapArray => _baseMapArray;
+    public Texture2DArray NormalMapArray => _normalMapArray;
+    public Texture2DArray RoughnessMapArray => _roughnessMapArray;
+    public Texture2DArray AOMapArray => _aoMapArray;
+    public Texture2DArray HeightMapArray => _heightMapArray;
+
+    public string GetDisplayName(byte materialId)
     {
-        resources = null;
+        for (int i = 0; i < _materials.Length; i++)
+        {
+            TerrainMaterialDefinition definition = _materials[i];
+            if (definition != null && definition.Id == materialId)
+            {
+                return string.IsNullOrWhiteSpace(definition.DisplayName)
+                    ? $"Material {materialId}"
+                    : definition.DisplayName;
+            }
+        }
+
+        return $"Material {materialId}";
+    }
+
+    public bool TryApplyToMaterial(Material targetMaterial, out string error)
+    {
+        error = null;
+
+        if (targetMaterial == null)
+        {
+            error = "Terrain material is not assigned.";
+            return false;
+        }
+
+        if (!HasBakedResources)
+        {
+            error = $"{name} has no baked texture arrays. Bake the library in the editor first.";
+            return false;
+        }
+
+        targetMaterial.SetTexture("_BaseMapArray", _baseMapArray);
+        targetMaterial.SetTexture("_NormalMapArray", _normalMapArray);
+        targetMaterial.SetTexture("_RoughnessMapArray", _roughnessMapArray);
+        targetMaterial.SetTexture("_AOMapArray", _aoMapArray);
+        targetMaterial.SetTexture("_HeightMapArray", _heightMapArray);
+        targetMaterial.SetInt("_MaterialCount", _materialCount);
+        targetMaterial.SetVectorArray("_MaterialBaseColors", _materialBaseColors);
+        return true;
+    }
+
+    public bool TryBuildBakeInput(out TerrainMaterialDefinition[] packedDefinitions, out Vector4[] baseColors, out string error)
+    {
+        packedDefinitions = null;
+        baseColors = null;
         error = null;
 
         if (_materials == null || _materials.Length == 0)
@@ -63,8 +131,8 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
             return false;
         }
 
-        TerrainMaterialDefinition[] packedDefinitions = new TerrainMaterialDefinition[maxMaterialId];
-        Vector4[] baseColors = new Vector4[maxMaterialId];
+        packedDefinitions = new TerrainMaterialDefinition[maxMaterialId];
+        baseColors = new Vector4[maxMaterialId];
 
         for (int materialId = 1; materialId <= maxMaterialId; materialId++)
         {
@@ -76,49 +144,39 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
             baseColors[materialId - 1] = definition.BaseColor;
         }
 
-        RuntimeResources builtResources = null;
-
-        try
-        {
-            builtResources = new RuntimeResources
-            {
-                MaterialCount = maxMaterialId,
-                BaseColors = baseColors,
-                BaseMaps = CreateTextureArray(packedDefinitions, definition => definition.BaseMap, false, "BaseMap"),
-                NormalMaps = CreateTextureArray(packedDefinitions, definition => definition.NormalMap, true, "NormalMap"),
-                RoughnessMaps = CreateTextureArray(packedDefinitions, definition => definition.RoughnessMap, true, "RoughnessMap"),
-                AOMaps = CreateTextureArray(packedDefinitions, definition => definition.AOMap, true, "AOMap"),
-                HeightMaps = CreateTextureArray(packedDefinitions, definition => definition.HeightMap, true, "HeightMap")
-            };
-
-            resources = builtResources;
-            return true;
-        }
-        catch (Exception exception)
-        {
-            builtResources?.Release();
-            error = exception.Message;
-            return false;
-        }
+        return true;
     }
 
-    public void ApplyToMaterial(Material targetMaterial, RuntimeResources resources)
+    public void SetBakedResources(
+        Texture2DArray baseMapArray,
+        Texture2DArray normalMapArray,
+        Texture2DArray roughnessMapArray,
+        Texture2DArray aoMapArray,
+        Texture2DArray heightMapArray,
+        Vector4[] materialBaseColors,
+        int materialCount)
     {
-        if (targetMaterial == null || resources == null)
-        {
-            return;
-        }
-
-        targetMaterial.SetTexture("_BaseMapArray", resources.BaseMaps);
-        targetMaterial.SetTexture("_NormalMapArray", resources.NormalMaps);
-        targetMaterial.SetTexture("_RoughnessMapArray", resources.RoughnessMaps);
-        targetMaterial.SetTexture("_AOMapArray", resources.AOMaps);
-        targetMaterial.SetTexture("_HeightMapArray", resources.HeightMaps);
-        targetMaterial.SetInt("_MaterialCount", resources.MaterialCount);
-        targetMaterial.SetVectorArray("_MaterialBaseColors", resources.BaseColors);
+        _baseMapArray = baseMapArray;
+        _normalMapArray = normalMapArray;
+        _roughnessMapArray = roughnessMapArray;
+        _aoMapArray = aoMapArray;
+        _heightMapArray = heightMapArray;
+        _materialBaseColors = materialBaseColors ?? Array.Empty<Vector4>();
+        _materialCount = materialCount;
     }
 
-    private static Texture2DArray CreateTextureArray(
+    public void ClearBakedResources()
+    {
+        _baseMapArray = null;
+        _normalMapArray = null;
+        _roughnessMapArray = null;
+        _aoMapArray = null;
+        _heightMapArray = null;
+        _materialBaseColors = Array.Empty<Vector4>();
+        _materialCount = 0;
+    }
+
+    public static Texture2DArray CreateTextureArray(
         TerrainMaterialDefinition[] definitions,
         Func<TerrainMaterialDefinition, Texture2D> selector,
         bool linear,
@@ -146,7 +204,7 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
             array.SetPixels(pixels, sliceIndex, 0);
         }
 
-        array.Apply(true, true);
+        array.Apply(true, false);
         return array;
     }
 
@@ -206,6 +264,7 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
     public sealed class TerrainMaterialDefinition
     {
         [Min(1)] public int Id = 1;
+        public string DisplayName = "Material";
         public Color BaseColor = Color.white;
         public Texture2D BaseMap;
         public Texture2D NormalMap;
@@ -219,50 +278,5 @@ public sealed class TerrainMaterialLibrary : ScriptableObject
             RoughnessMap != null &&
             AOMap != null &&
             HeightMap != null;
-    }
-
-    public sealed class RuntimeResources
-    {
-        public int MaterialCount;
-        public Vector4[] BaseColors;
-        public Texture2DArray BaseMaps;
-        public Texture2DArray NormalMaps;
-        public Texture2DArray RoughnessMaps;
-        public Texture2DArray AOMaps;
-        public Texture2DArray HeightMaps;
-
-        public void Release()
-        {
-            DestroyTexture(BaseMaps);
-            DestroyTexture(NormalMaps);
-            DestroyTexture(RoughnessMaps);
-            DestroyTexture(AOMaps);
-            DestroyTexture(HeightMaps);
-
-            BaseMaps = null;
-            NormalMaps = null;
-            RoughnessMaps = null;
-            AOMaps = null;
-            HeightMaps = null;
-            BaseColors = null;
-            MaterialCount = 0;
-        }
-
-        private static void DestroyTexture(Texture texture)
-        {
-            if (texture == null)
-            {
-                return;
-            }
-
-            if (Application.isPlaying)
-            {
-                UnityEngine.Object.Destroy(texture);
-            }
-            else
-            {
-                UnityEngine.Object.DestroyImmediate(texture);
-            }
-        }
     }
 }

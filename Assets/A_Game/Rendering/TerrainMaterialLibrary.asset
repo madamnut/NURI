@@ -14,6 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _materials:
   - Id: 1
+    DisplayName: Dirt
     BaseColor: {r: 1, g: 1, b: 1, a: 1}
     BaseMap: {fileID: 2800000, guid: bb44acf5468268a46ac32d9606dde012, type: 3}
     NormalMap: {fileID: 2800000, guid: 6a2484d1d56644c4e91af7fe2b1bd511, type: 3}
@@ -21,9 +22,17 @@ MonoBehaviour:
     AOMap: {fileID: 2800000, guid: 570cfc012e6c2ee4b873fca30ac3b065, type: 3}
     HeightMap: {fileID: 2800000, guid: e0be64fb532d8a4419596698bf4b3f95, type: 3}
   - Id: 2
+    DisplayName: Rock
     BaseColor: {r: 1, g: 1, b: 1, a: 1}
     BaseMap: {fileID: 2800000, guid: dd0586e2dfaaa7a43ba8615e267359fd, type: 3}
     NormalMap: {fileID: 2800000, guid: a49831f53b8f8824f87121c1c20e626e, type: 3}
     RoughnessMap: {fileID: 2800000, guid: 7c6ed4b1b8b88634697f1da42f10f104, type: 3}
     AOMap: {fileID: 2800000, guid: c8bc20d07d2f41a43987c638436ae01d, type: 3}
     HeightMap: {fileID: 2800000, guid: 85bec6c6222b79641a2aecac1886ca9b, type: 3}
+  _baseMapArray: {fileID: 0}
+  _normalMapArray: {fileID: 0}
+  _roughnessMapArray: {fileID: 0}
+  _aoMapArray: {fileID: 0}
+  _heightMapArray: {fileID: 0}
+  _materialBaseColors: []
+  _materialCount: 0

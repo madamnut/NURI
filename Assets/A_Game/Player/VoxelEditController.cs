@@ -28,6 +28,9 @@ public sealed class VoxelEditController : MonoBehaviour
     private float _editAccumulator;
     private float _nextDebugLogTime;
 
+    public float MaxRayDistance => _maxRayDistance;
+    public LayerMask HitMask => _hitMask;
+
     private void Awake()
     {
         if (_camera == null)

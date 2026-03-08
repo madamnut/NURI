@@ -17,10 +17,15 @@ public static class MeshApplyUtility
             return;
         }
 
+        view.PrepareScratchBuffers(meshData.Vertices.Length, meshData.Indices.Length, meshData.MaterialInfo.Length);
+        CopyVertices(meshData.Vertices, view.VertexScratch);
+        CopyIndices(meshData.Indices, view.IndexScratch);
+        CopyMaterialInfo(meshData.MaterialInfo, view.Uv2Scratch);
+
         mesh.Clear();
-        mesh.vertices = ToVector3Array(meshData.Vertices);
-        mesh.triangles = ToIntArray(meshData.Indices);
-        mesh.uv2 = ToVector2Array(meshData.MaterialInfo);
+        mesh.SetVertices(view.VertexScratch);
+        mesh.SetTriangles(view.IndexScratch, 0, false);
+        mesh.SetUVs(1, view.Uv2Scratch);
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
 
@@ -33,37 +38,28 @@ public static class MeshApplyUtility
         view.MeshCollider.sharedMesh = mesh;
     }
 
-    private static Vector3[] ToVector3Array(NativeArray<float3> source)
+    private static void CopyVertices(NativeArray<float3> source, System.Collections.Generic.List<Vector3> destination)
     {
-        Vector3[] array = new Vector3[source.Length];
         for (int i = 0; i < source.Length; i++)
         {
-            array[i] = source[i];
+            destination.Add(source[i]);
         }
-
-        return array;
     }
 
-    private static int[] ToIntArray(NativeArray<int> source)
+    private static void CopyIndices(NativeArray<int> source, System.Collections.Generic.List<int> destination)
     {
-        int[] array = new int[source.Length];
         for (int i = 0; i < source.Length; i++)
         {
-            array[i] = source[i];
+            destination.Add(source[i]);
         }
-
-        return array;
     }
 
-    private static Vector2[] ToVector2Array(NativeArray<float2> source)
+    private static void CopyMaterialInfo(NativeArray<float2> source, System.Collections.Generic.List<Vector2> destination)
     {
-        Vector2[] array = new Vector2[source.Length];
         for (int i = 0; i < source.Length; i++)
         {
             float2 value = source[i];
-            array[i] = new Vector2(value.x, value.y);
+            destination.Add(new Vector2(value.x, value.y));
         }
-
-        return array;
     }
 }

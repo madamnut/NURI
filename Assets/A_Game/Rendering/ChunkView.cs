@@ -33,6 +33,16 @@ public sealed class ChunkView : MonoBehaviour
         }
     }
 
+    public void ClearAllSubChunks()
+    {
+        EnsureSubChunks();
+
+        for (int i = 0; i < _subChunks.Length; i++)
+        {
+            _subChunks[i].ClearMesh();
+        }
+    }
+
     private void Reset()
     {
         EnsureSubChunks();

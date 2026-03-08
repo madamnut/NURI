@@ -762,6 +762,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldDebugUI
   _worldSystem: {fileID: 1976003901}
   _referenceCamera: {fileID: 330585545}
+  _voxelEditController: {fileID: 0}
   _debugRoot: {fileID: 1550550789}
   _targetText: {fileID: 1183690651}
   _refreshInterval: 0.25
@@ -1292,6 +1293,10 @@ MonoBehaviour:
     BaseHeight: 48
     HeightAmplitude: 64
     SurfaceFade: 8
+  _streamingTarget: {fileID: 330585546}
+  _loadRadius: 16
+  _maxChunkLoadsPerFrame: 4
+  _maxChunkUnloadsPerFrame: 8
   _chunkViewPrefab: {fileID: 68376585372058145, guid: 4adc5534646c11c4788b785e65fb5f88, type: 3}
   _chunkRoot: {fileID: 1976003902}
   _terrainMaterial: {fileID: 2100000, guid: 9936319df9970504e99b5af1ab084fac, type: 2}

@@ -1,25 +1,15 @@
+using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
 
 /// <summary>
-/// 월드 전체 흐름을 관리하는 중심 시스템이다.
-///
-/// 이 클래스는 다음 책임을 가진다.
-/// - 청크 데이터 생성과 보관
-/// - 청크 뷰 생성과 배치
-/// - 지형 생성 Job 실행
-/// - dirty 서브청크 재메시
-/// - density 브러시 편집과 영향 청크 갱신
+/// Owns chunk data, chunk views, streaming, generation, meshing, and density edits.
 /// </summary>
 public sealed class WorldSystem : MonoBehaviour
 {
-    [Header("월드 생성 범위")]
-    [SerializeField] private int _countX = 10;
-    [SerializeField] private int _countZ = 10;
-
-    [Header("생성 설정")]
+    [Header("Generation")]
     [SerializeField] private TerrainGenerationSettings _generationSettings = new TerrainGenerationSettings
     {
         NoiseScale = 0.02f,
@@ -28,44 +18,128 @@ public sealed class WorldSystem : MonoBehaviour
         SurfaceFade = 8f
     };
 
-    [Header("뷰 설정")]
+    [Header("Streaming")]
+    [SerializeField] private Transform _streamingTarget;
+    [SerializeField] private int _loadRadius = 8;
+    [SerializeField] private int _maxChunkLoadsPerFrame = 2;
+    [SerializeField] private int _maxChunkUnloadsPerFrame = 4;
+
+    [Header("View")]
     [SerializeField] private ChunkView _chunkViewPrefab;
     [SerializeField] private Transform _chunkRoot;
     [SerializeField] private Material _terrainMaterial;
     [SerializeField] private TerrainMaterialLibrary _terrainMaterialLibrary;
     [SerializeField] private bool _applyMeshCollider = true;
 
+    private sealed class PendingChunkGeneration
+    {
+        public ChunkCoord Coord;
+        public JobHandle Handle;
+    }
+
+    private sealed class PendingSubChunkBuild : IDisposable
+    {
+        public int SubChunkIndex;
+        public bool WriteScheduled;
+        public bool ReadyToApply;
+        public SubChunkView View;
+        public NativeArray<byte> TriangleCounts;
+        public NativeArray<int> TriangleOffsets;
+        public SubChunkMeshData MeshData;
+        public JobHandle Handle;
+
+        public void Dispose()
+        {
+            if (TriangleCounts.IsCreated)
+            {
+                TriangleCounts.Dispose();
+            }
+
+            if (TriangleOffsets.IsCreated)
+            {
+                TriangleOffsets.Dispose();
+            }
+
+            if (MeshData != null)
+            {
+                MeshData.Dispose();
+                MeshData = null;
+            }
+        }
+    }
+
+    private sealed class PendingChunkMeshBuild : IDisposable
+    {
+        public ChunkCoord Coord;
+        public ChunkView View;
+        public bool ApplyCollider;
+        public PendingSubChunkBuild[] SubChunkBuilds;
+
+        public void Dispose()
+        {
+            if (SubChunkBuilds == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < SubChunkBuilds.Length; i++)
+            {
+                SubChunkBuilds[i]?.Dispose();
+            }
+        }
+    }
+
     private readonly ChunkDataStore _chunkStore = new ChunkDataStore();
     private readonly Dictionary<ChunkCoord, ChunkView> _chunkViews = new Dictionary<ChunkCoord, ChunkView>();
     private readonly HashSet<ChunkCoord> _modifiedChunks = new HashSet<ChunkCoord>();
-    private TerrainMaterialLibrary.RuntimeResources _terrainMaterialResources;
+    private readonly HashSet<ChunkCoord> _desiredChunkCoords = new HashSet<ChunkCoord>();
+    private readonly Queue<ChunkCoord> _pendingChunkLoads = new Queue<ChunkCoord>();
+    private readonly Queue<ChunkCoord> _pendingChunkUnloads = new Queue<ChunkCoord>();
+    private readonly HashSet<ChunkCoord> _pendingLoadSet = new HashSet<ChunkCoord>();
+    private readonly HashSet<ChunkCoord> _pendingUnloadSet = new HashSet<ChunkCoord>();
+    private readonly Dictionary<ChunkCoord, PendingChunkGeneration> _pendingGenerations = new Dictionary<ChunkCoord, PendingChunkGeneration>();
+    private readonly Dictionary<ChunkCoord, PendingChunkMeshBuild> _pendingChunkMeshBuilds = new Dictionary<ChunkCoord, PendingChunkMeshBuild>();
+    private readonly List<ChunkCoord> _coordBuffer = new List<ChunkCoord>();
+    private readonly List<ChunkCoord> _loadBuffer = new List<ChunkCoord>();
+    private readonly List<ChunkCoord> _unloadBuffer = new List<ChunkCoord>();
+    private readonly List<ChunkCoord> _deferredUnloadBuffer = new List<ChunkCoord>();
+    private readonly List<ChunkCoord> _completedGenerationBuffer = new List<ChunkCoord>();
+    private readonly List<ChunkCoord> _completedChunkMeshBuffer = new List<ChunkCoord>();
+    private readonly Stack<ChunkView> _chunkViewPool = new Stack<ChunkView>();
+
+    private bool _hasStreamingCenter;
+    private ChunkCoord _streamingCenter;
 
     public int LoadedChunkCount => _chunkStore.Count;
+    public int PendingChunkLoadCount => _pendingChunkLoads.Count;
+    public int PendingGenerationCount => _pendingGenerations.Count;
+    public int PendingMeshBuildCount => _pendingChunkMeshBuilds.Count;
+    public int PendingChunkUnloadCount => _pendingChunkUnloads.Count;
+    public int PooledChunkViewCount => _chunkViewPool.Count;
     public bool HasGeneratedWorld { get; private set; }
+    public TerrainMaterialLibrary TerrainMaterialLibrary => _terrainMaterialLibrary;
+    private int MaxChunkViewPoolCount => ChunkCountForRadius(Mathf.Max(0, _loadRadius) + 2);
 
     [ContextMenu("Generate Initial World")]
     public void GenerateInitialWorld()
     {
-        ReleaseTerrainMaterialResources();
         EnsureTerrainMaterialConfigured();
         ClearWorld();
 
-        Transform root = _chunkRoot != null ? _chunkRoot : transform;
-
-        for (int z = 0; z < _countZ; z++)
-        {
-            for (int x = 0; x < _countX; x++)
-            {
-                GenerateChunk(new ChunkCoord(x, z), root);
-            }
-        }
-
         HasGeneratedWorld = true;
+        RefreshStreamingCenter(true);
+        ProcessQueuedOperations(
+            Mathf.Max(0, _maxChunkLoadsPerFrame),
+            Mathf.Max(0, _maxChunkUnloadsPerFrame));
+        ProcessCompletedGenerationJobs();
+        ProcessCompletedChunkMeshBuilds();
     }
 
     [ContextMenu("Clear World")]
     public void ClearWorld()
     {
+        CompleteAndDisposePendingJobs();
+
         foreach (ChunkView view in _chunkViews.Values)
         {
             if (view == null)
@@ -73,18 +147,33 @@ public sealed class WorldSystem : MonoBehaviour
                 continue;
             }
 
-            if (Application.isPlaying)
+            DestroyChunkView(view);
+        }
+
+        while (_chunkViewPool.Count > 0)
+        {
+            ChunkView pooledView = _chunkViewPool.Pop();
+            if (pooledView != null)
             {
-                Destroy(view.gameObject);
-            }
-            else
-            {
-                DestroyImmediate(view.gameObject);
+                DestroyChunkView(pooledView);
             }
         }
 
         _chunkViews.Clear();
         _chunkStore.ClearAndDispose();
+        _desiredChunkCoords.Clear();
+        _pendingChunkLoads.Clear();
+        _pendingChunkUnloads.Clear();
+        _pendingLoadSet.Clear();
+        _pendingUnloadSet.Clear();
+        _coordBuffer.Clear();
+        _loadBuffer.Clear();
+        _unloadBuffer.Clear();
+        _deferredUnloadBuffer.Clear();
+        _completedGenerationBuffer.Clear();
+        _completedChunkMeshBuffer.Clear();
+        _modifiedChunks.Clear();
+        _hasStreamingCenter = false;
         HasGeneratedWorld = false;
     }
 
@@ -93,23 +182,38 @@ public sealed class WorldSystem : MonoBehaviour
         return _chunkStore.TryGet(coord, out chunk);
     }
 
-    /// <summary>
-    /// 현재 로드된 모든 청크를 density 원본 기준으로 강제 리빌드한다.
-    ///
-    /// 이 메서드는 디버그용으로 유용하다.
-    /// 편집 후 구멍이나 seam이 보일 때, 같은 density 데이터로 다시 메시를 만들었는데도
-    /// 문제가 남는지 확인하면 원인이 편집기인지 메셔인지 분리하기 쉬워진다.
-    /// </summary>
+    public bool TryGetWorldCellMaterial(int worldX, int worldY, int worldZ, out byte materialId)
+    {
+        materialId = 0;
+
+        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
+        {
+            return false;
+        }
+
+        ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldX, worldZ);
+        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+        {
+            return false;
+        }
+
+        Vector3Int localCell = WorldMath.WorldCellToLocalCell(worldX, worldY, worldZ);
+        if (localCell.x < 0 || localCell.x >= WorldConstants.ChunkSizeX ||
+            localCell.z < 0 || localCell.z >= WorldConstants.ChunkSizeZ)
+        {
+            return false;
+        }
+
+        materialId = chunk.GetMaterialId(localCell.x, localCell.y, localCell.z);
+        return true;
+    }
+
     [ContextMenu("Rebuild All Loaded Chunks")]
     public void RebuildAllLoadedChunks()
     {
         RebuildAllLoadedChunks(true);
     }
 
-    /// <summary>
-    /// 현재 로드된 모든 청크를 강제로 다시 메시화한다.
-    /// 필요에 따라 collider 갱신을 끌 수 있다.
-    /// </summary>
     public void RebuildAllLoadedChunks(bool applyCollider)
     {
         foreach (KeyValuePair<ChunkCoord, ChunkData> pair in _chunkStore.Enumerate())
@@ -127,18 +231,6 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 화면 중앙에서 맞춘 지점을 기준으로 density 브러시를 적용한다.
-    ///
-    /// 현재 편집 방식은 예시 프로젝트와 비슷하게 "반경 안의 density를 직접 수정"하는 구조다.
-    /// 즉 메시를 직접 깎거나 표면 샘플만 따로 고르는 것이 아니라,
-    /// 히트 지점 주변 density field 전체를 부드럽게 밀고 당긴다.
-    ///
-    /// 이 방식의 장점은 다음과 같다.
-    /// - 생성과 파괴의 반응이 더 대칭적이다.
-    /// - 이미 편집한 지형을 반대로 편집할 때 속도 차이가 덜하다.
-    /// - 표면 샘플만 억지로 고르지 않으므로 중간에 메워지지 않는 구멍이 줄어든다.
-    /// </summary>
     public void ApplyOrientedBrush(Vector3 worldPosition, Vector3 surfaceNormal, float radius, int deltaAmount)
     {
         if (!HasGeneratedWorld || radius <= 0f || deltaAmount == 0)
@@ -172,13 +264,217 @@ public sealed class WorldSystem : MonoBehaviour
         ApplyOrientedBrush(worldPosition, Vector3.up, radius, deltaAmount);
     }
 
+    private void Update()
+    {
+        if (!HasGeneratedWorld)
+        {
+            return;
+        }
+
+        RefreshStreamingCenter(false);
+        ProcessCompletedGenerationJobs();
+        ProcessCompletedChunkMeshBuilds();
+        ProcessQueuedOperations(
+            Mathf.Max(0, _maxChunkLoadsPerFrame),
+            Mathf.Max(0, _maxChunkUnloadsPerFrame));
+        ProcessCompletedGenerationJobs();
+        ProcessCompletedChunkMeshBuilds();
+    }
+
     private void OnDestroy()
     {
-        ReleaseTerrainMaterialResources();
+        CompleteAndDisposePendingJobs();
         _chunkStore.Dispose();
     }
 
-    private void GenerateChunk(ChunkCoord coord, Transform root)
+    private void RefreshStreamingCenter(bool force)
+    {
+        ChunkCoord center = ResolveStreamingCenterCoord();
+        if (!force && _hasStreamingCenter && center == _streamingCenter)
+        {
+            return;
+        }
+
+        _streamingCenter = center;
+        _hasStreamingCenter = true;
+        RefreshDesiredChunkSet(center);
+    }
+
+    private ChunkCoord ResolveStreamingCenterCoord()
+    {
+        Transform target = _streamingTarget;
+        if (target == null && Camera.main != null)
+        {
+            target = Camera.main.transform;
+        }
+
+        if (target == null)
+        {
+            if (_hasStreamingCenter)
+            {
+                return _streamingCenter;
+            }
+
+            return new ChunkCoord(0, 0);
+        }
+
+        int worldX = Mathf.FloorToInt(target.position.x);
+        int worldZ = Mathf.FloorToInt(target.position.z);
+        return WorldMath.WorldCellToChunkCoord(worldX, worldZ);
+    }
+
+    private void RefreshDesiredChunkSet(ChunkCoord center)
+    {
+        _desiredChunkCoords.Clear();
+        int loadRadius = Mathf.Max(0, _loadRadius);
+
+        for (int dz = -loadRadius; dz <= loadRadius; dz++)
+        {
+            for (int dx = -loadRadius; dx <= loadRadius; dx++)
+            {
+                _desiredChunkCoords.Add(new ChunkCoord(center.X + dx, center.Z + dz));
+            }
+        }
+
+        _loadBuffer.Clear();
+        foreach (ChunkCoord coord in _desiredChunkCoords)
+        {
+            if (_chunkStore.Contains(coord))
+            {
+                continue;
+            }
+
+            _loadBuffer.Add(coord);
+        }
+
+        _loadBuffer.Sort((left, right) =>
+        {
+            int leftDistance = ChunkDistanceSq(left, center);
+            int rightDistance = ChunkDistanceSq(right, center);
+
+            if (leftDistance != rightDistance)
+            {
+                return leftDistance.CompareTo(rightDistance);
+            }
+
+            if (left.Z != right.Z)
+            {
+                return left.Z.CompareTo(right.Z);
+            }
+
+            return left.X.CompareTo(right.X);
+        });
+
+        for (int i = 0; i < _loadBuffer.Count; i++)
+        {
+            EnqueueChunkLoad(_loadBuffer[i]);
+        }
+
+        _coordBuffer.Clear();
+        foreach (KeyValuePair<ChunkCoord, ChunkData> pair in _chunkStore.Enumerate())
+        {
+            _coordBuffer.Add(pair.Key);
+        }
+
+        _unloadBuffer.Clear();
+        for (int i = 0; i < _coordBuffer.Count; i++)
+        {
+            ChunkCoord coord = _coordBuffer[i];
+            if (_desiredChunkCoords.Contains(coord))
+            {
+                continue;
+            }
+
+            _unloadBuffer.Add(coord);
+        }
+
+        _unloadBuffer.Sort((left, right) =>
+        {
+            int leftDistance = ChunkDistanceSq(left, center);
+            int rightDistance = ChunkDistanceSq(right, center);
+
+            if (leftDistance != rightDistance)
+            {
+                return rightDistance.CompareTo(leftDistance);
+            }
+
+            if (left.Z != right.Z)
+            {
+                return right.Z.CompareTo(left.Z);
+            }
+
+            return right.X.CompareTo(left.X);
+        });
+
+        for (int i = 0; i < _unloadBuffer.Count; i++)
+        {
+            EnqueueChunkUnload(_unloadBuffer[i]);
+        }
+    }
+
+    private void EnqueueChunkLoad(ChunkCoord coord)
+    {
+        if (_pendingLoadSet.Add(coord))
+        {
+            _pendingChunkLoads.Enqueue(coord);
+        }
+    }
+
+    private void EnqueueChunkUnload(ChunkCoord coord)
+    {
+        if (_pendingUnloadSet.Add(coord))
+        {
+            _pendingChunkUnloads.Enqueue(coord);
+        }
+    }
+
+    private void ProcessQueuedOperations(int loadBudget, int unloadBudget)
+    {
+        int unloaded = 0;
+        _deferredUnloadBuffer.Clear();
+
+        while (unloaded < unloadBudget && _pendingChunkUnloads.Count > 0)
+        {
+            ChunkCoord coord = _pendingChunkUnloads.Dequeue();
+            _pendingUnloadSet.Remove(coord);
+
+            if (_desiredChunkCoords.Contains(coord))
+            {
+                continue;
+            }
+
+            if (HasPendingJobsForChunk(coord))
+            {
+                _deferredUnloadBuffer.Add(coord);
+                continue;
+            }
+
+            UnloadChunk(coord);
+            unloaded++;
+        }
+
+        for (int i = 0; i < _deferredUnloadBuffer.Count; i++)
+        {
+            EnqueueChunkUnload(_deferredUnloadBuffer[i]);
+        }
+
+        int loaded = 0;
+        while (loaded < loadBudget && _pendingChunkLoads.Count > 0)
+        {
+            ChunkCoord coord = _pendingChunkLoads.Dequeue();
+            _pendingLoadSet.Remove(coord);
+
+            if (!_desiredChunkCoords.Contains(coord) || _chunkStore.Contains(coord))
+            {
+                continue;
+            }
+
+            GenerateChunk(coord);
+            loaded++;
+        }
+    }
+
+    private void GenerateChunk(ChunkCoord coord)
     {
         ChunkData chunk = new ChunkData(coord);
         _chunkStore.Add(chunk);
@@ -191,22 +487,104 @@ public sealed class WorldSystem : MonoBehaviour
             MaterialIds = chunk.MaterialIds
         };
 
-        JobHandle generationHandle = generationJob.Schedule(WorldConstants.ChunkSampleCount, 128);
-        generationHandle.Complete();
+        PendingChunkGeneration operation = new PendingChunkGeneration
+        {
+            Coord = coord,
+            Handle = generationJob.Schedule(WorldConstants.ChunkSampleCount, 128)
+        };
 
-        ChunkView view = CreateChunkView(coord, root);
-        _chunkViews.Add(coord, view);
-
-        chunk.MarkAllSubChunksDirty();
-        RebuildDirtySubChunks(chunk, view, _applyMeshCollider);
+        _pendingGenerations.Add(coord, operation);
     }
 
-    private ChunkView CreateChunkView(ChunkCoord coord, Transform root)
+    private void ProcessCompletedGenerationJobs()
+    {
+        if (_pendingGenerations.Count == 0)
+        {
+            return;
+        }
+
+        _completedGenerationBuffer.Clear();
+        foreach (KeyValuePair<ChunkCoord, PendingChunkGeneration> pair in _pendingGenerations)
+        {
+            if (pair.Value.Handle.IsCompleted)
+            {
+                _completedGenerationBuffer.Add(pair.Key);
+            }
+        }
+
+        for (int i = 0; i < _completedGenerationBuffer.Count; i++)
+        {
+            ChunkCoord coord = _completedGenerationBuffer[i];
+            PendingChunkGeneration operation = _pendingGenerations[coord];
+            operation.Handle.Complete();
+            _pendingGenerations.Remove(coord);
+
+            if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+            {
+                continue;
+            }
+
+            if (!_desiredChunkCoords.Contains(coord))
+            {
+                _chunkStore.RemoveAndDispose(coord);
+                continue;
+            }
+
+            Transform root = _chunkRoot != null ? _chunkRoot : transform;
+            ChunkView view = AcquireChunkView(coord, root);
+            _chunkViews[coord] = view;
+            ScheduleChunkLoadBuild(chunk, view, _applyMeshCollider);
+        }
+    }
+
+    private void ProcessCompletedChunkMeshBuilds()
+    {
+        if (_pendingChunkMeshBuilds.Count == 0)
+        {
+            return;
+        }
+
+        _completedChunkMeshBuffer.Clear();
+        foreach (KeyValuePair<ChunkCoord, PendingChunkMeshBuild> pair in _pendingChunkMeshBuilds)
+        {
+            if (TryAdvanceChunkMeshBuild(pair.Value))
+            {
+                _completedChunkMeshBuffer.Add(pair.Key);
+            }
+        }
+
+        for (int i = 0; i < _completedChunkMeshBuffer.Count; i++)
+        {
+            ChunkCoord coord = _completedChunkMeshBuffer[i];
+            PendingChunkMeshBuild build = _pendingChunkMeshBuilds[coord];
+            _pendingChunkMeshBuilds.Remove(coord);
+            FinalizeChunkMeshBuild(build);
+        }
+    }
+
+    private void UnloadChunk(ChunkCoord coord)
+    {
+        _chunkStore.RemoveAndDispose(coord);
+
+        if (_chunkViews.TryGetValue(coord, out ChunkView view))
+        {
+            _chunkViews.Remove(coord);
+            ReleaseChunkView(view);
+        }
+    }
+
+    private ChunkView AcquireChunkView(ChunkCoord coord, Transform root)
     {
         EnsureTerrainMaterialConfigured();
-        ChunkView view;
 
-        if (_chunkViewPrefab != null)
+        ChunkView view;
+        if (_chunkViewPool.Count > 0)
+        {
+            view = _chunkViewPool.Pop();
+            view.transform.SetParent(root, false);
+            view.gameObject.SetActive(true);
+        }
+        else if (_chunkViewPrefab != null)
         {
             view = Instantiate(_chunkViewPrefab, root);
         }
@@ -222,6 +600,43 @@ public sealed class WorldSystem : MonoBehaviour
         return view;
     }
 
+    private void ReleaseChunkView(ChunkView view)
+    {
+        if (view == null)
+        {
+            return;
+        }
+
+        view.ClearAllSubChunks();
+        view.gameObject.SetActive(false);
+
+        if (_chunkViewPool.Count >= MaxChunkViewPoolCount)
+        {
+            DestroyChunkView(view);
+            return;
+        }
+
+        view.transform.SetParent(_chunkRoot != null ? _chunkRoot : transform, false);
+        _chunkViewPool.Push(view);
+    }
+
+    private void DestroyChunkView(ChunkView view)
+    {
+        if (view == null)
+        {
+            return;
+        }
+
+        if (Application.isPlaying)
+        {
+            Destroy(view.gameObject);
+        }
+        else
+        {
+            DestroyImmediate(view.gameObject);
+        }
+    }
+
     private void EnsureTerrainMaterialConfigured()
     {
         if (_terrainMaterial == null || _terrainMaterialLibrary == null)
@@ -229,27 +644,171 @@ public sealed class WorldSystem : MonoBehaviour
             return;
         }
 
-        if (_terrainMaterialResources == null)
+        if (!_terrainMaterialLibrary.TryApplyToMaterial(_terrainMaterial, out string error))
         {
-            if (!_terrainMaterialLibrary.TryBuildRuntimeResources(out _terrainMaterialResources, out string error))
-            {
-                Debug.LogError($"Failed to build terrain material arrays: {error}", this);
-                return;
-            }
+            Debug.LogError($"Failed to apply terrain material library: {error}", this);
         }
-
-        _terrainMaterialLibrary.ApplyToMaterial(_terrainMaterial, _terrainMaterialResources);
     }
 
-    private void ReleaseTerrainMaterialResources()
+    private void ScheduleChunkLoadBuild(ChunkData chunk, ChunkView view, bool applyCollider)
     {
-        if (_terrainMaterialResources == null)
+        chunk.MarkAllSubChunksDirty();
+        view.ClearAllSubChunks();
+        view.gameObject.SetActive(false);
+
+        PendingChunkMeshBuild build = new PendingChunkMeshBuild
         {
-            return;
+            Coord = chunk.Coord,
+            View = view,
+            ApplyCollider = applyCollider,
+            SubChunkBuilds = new PendingSubChunkBuild[WorldConstants.SubChunkCount]
+        };
+
+        for (int subChunkIndex = 0; subChunkIndex < WorldConstants.SubChunkCount; subChunkIndex++)
+        {
+            SubChunkView subChunkView = view.GetSubChunk(subChunkIndex);
+            if (subChunkView == null)
+            {
+                continue;
+            }
+
+            PendingSubChunkBuild operation = new PendingSubChunkBuild
+            {
+                SubChunkIndex = subChunkIndex,
+                View = subChunkView,
+                TriangleCounts = new NativeArray<byte>(WorldConstants.SubChunkCellCount, Allocator.Persistent),
+                TriangleOffsets = new NativeArray<int>(WorldConstants.SubChunkCellCount, Allocator.Persistent)
+            };
+
+            SubChunkTriangleCountJob countJob = new SubChunkTriangleCountJob
+            {
+                Density = chunk.Density,
+                SubChunkIndex = subChunkIndex,
+                TriangleCounts = operation.TriangleCounts
+            };
+
+            operation.Handle = countJob.Schedule(WorldConstants.SubChunkCellCount, 128);
+            build.SubChunkBuilds[subChunkIndex] = operation;
         }
 
-        _terrainMaterialResources.Release();
-        _terrainMaterialResources = null;
+        _pendingChunkMeshBuilds[chunk.Coord] = build;
+    }
+
+    private bool TryAdvanceChunkMeshBuild(PendingChunkMeshBuild build)
+    {
+        bool allReady = true;
+
+        for (int i = 0; i < build.SubChunkBuilds.Length; i++)
+        {
+            PendingSubChunkBuild operation = build.SubChunkBuilds[i];
+            if (operation == null || operation.ReadyToApply)
+            {
+                continue;
+            }
+
+            if (!operation.Handle.IsCompleted)
+            {
+                allReady = false;
+                continue;
+            }
+
+            operation.Handle.Complete();
+
+            if (!operation.WriteScheduled)
+            {
+                int totalTriangles = SubChunkTrianglePrefixSum.Build(operation.TriangleCounts, operation.TriangleOffsets);
+                if (totalTriangles == 0)
+                {
+                    operation.ReadyToApply = true;
+                    continue;
+                }
+
+                if (!_chunkStore.TryGet(build.Coord, out ChunkData chunk))
+                {
+                    operation.ReadyToApply = true;
+                    continue;
+                }
+
+                operation.MeshData = new SubChunkMeshData(totalTriangles, Allocator.Persistent);
+
+                SubChunkMeshWriteJob writeJob = new SubChunkMeshWriteJob
+                {
+                    Density = chunk.Density,
+                    MaterialIds = chunk.MaterialIds,
+                    TriangleCounts = operation.TriangleCounts,
+                    TriangleOffsets = operation.TriangleOffsets,
+                    SubChunkIndex = operation.SubChunkIndex,
+                    Vertices = operation.MeshData.Vertices,
+                    Indices = operation.MeshData.Indices,
+                    MaterialInfo = operation.MeshData.MaterialInfo
+                };
+
+                operation.Handle = writeJob.Schedule(WorldConstants.SubChunkCellCount, 128);
+                operation.WriteScheduled = true;
+                allReady = false;
+                continue;
+            }
+
+            operation.ReadyToApply = true;
+        }
+
+        return allReady;
+    }
+
+    private void FinalizeChunkMeshBuild(PendingChunkMeshBuild build)
+    {
+        try
+        {
+            bool isDesired = _desiredChunkCoords.Contains(build.Coord);
+            bool hasChunk = _chunkStore.TryGet(build.Coord, out ChunkData chunk);
+            bool hasView = _chunkViews.TryGetValue(build.Coord, out ChunkView currentView);
+            bool shouldApply = isDesired && hasChunk && hasView && currentView == build.View;
+
+            if (!shouldApply)
+            {
+                if (hasView && currentView == build.View)
+                {
+                    _chunkViews.Remove(build.Coord);
+                    ReleaseChunkView(currentView);
+                }
+
+                if (!isDesired && hasChunk)
+                {
+                    UnloadChunk(build.Coord);
+                }
+
+                return;
+            }
+
+            for (int i = 0; i < build.SubChunkBuilds.Length; i++)
+            {
+                PendingSubChunkBuild operation = build.SubChunkBuilds[i];
+                if (operation == null || operation.View == null)
+                {
+                    continue;
+                }
+
+                if (operation.MeshData != null &&
+                    operation.MeshData.IsCreated &&
+                    operation.MeshData.Vertices.Length > 0 &&
+                    operation.MeshData.Indices.Length > 0)
+                {
+                    MeshApplyUtility.ApplyToSubChunk(operation.View, operation.MeshData, build.ApplyCollider);
+                }
+                else
+                {
+                    operation.View.ClearMesh();
+                }
+
+                chunk.ClearSubChunkDirty(operation.SubChunkIndex);
+            }
+
+            build.View.gameObject.SetActive(true);
+        }
+        finally
+        {
+            build.Dispose();
+        }
     }
 
     private void RebuildDirtySubChunks(ChunkData chunk, ChunkView view, bool applyCollider)
@@ -331,12 +890,6 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 주어진 월드 샘플 AABB와 겹치는 청크만 순회하면서 density를 수정한다.
-    ///
-    /// 이 메서드는 편집 쿼리의 바깥 루프다.
-    /// 브러시 반경과 겹치는 청크만 좁혀서 순회해야 불필요한 샘플 검사를 줄일 수 있다.
-    /// </summary>
     private void ModifyDensityInBounds(
         int minSampleX,
         int maxSampleX,
@@ -372,15 +925,6 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 브러시 AABB 안의 월드 샘플을 한 번씩만 순회하며 density를 수정한다.
-    ///
-    /// 중요한 이유는 density 샘플이 청크 경계에서 인접 청크와 공유되기 때문이다.
-    /// 샘플을 청크별로 순회하면 같은 월드 샘플이 경계에서 두 번 수정될 수 있다.
-    ///
-    /// 여기서는 월드 샘플을 기준으로 한 번만 판단하고,
-    /// 값이 바뀌면 그 샘플을 공유하는 모든 청크에 동일하게 기록한다.
-    /// </summary>
     private void ModifySharedSamplesInBounds(
         int minSampleX,
         int maxSampleX,
@@ -425,12 +969,6 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 브러시 중심점 반경 안에 있는 샘플에 대해 기본적인 거리 기반 delta를 계산한다.
-    ///
-    /// 이 함수는 "얼마나 강하게 바꿀지"만 계산한다.
-    /// 실제로 수정 가능한 surface 샘플인지는 별도 검사에서 판정한다.
-    /// </summary>
     private static int EvaluateSurfaceBrushDelta(
         Vector3 sampleWorldPosition,
         Vector3 brushCenter,
@@ -445,14 +983,11 @@ public sealed class WorldSystem : MonoBehaviour
         }
 
         float radialWeight = 1f - (distance / Mathf.Max(0.0001f, radius));
-
-        // threshold 근처 샘플일수록 변화량을 조금 더 우대한다.
         float thresholdDistance = Mathf.Abs(currentDensity - WorldConstants.SurfaceThreshold) / 127f;
         float thresholdWeight = 1f - Mathf.Clamp01(thresholdDistance);
         float combinedWeight = Mathf.Max(radialWeight, thresholdWeight * 0.5f);
 
         int delta = Mathf.RoundToInt(deltaAmount * combinedWeight);
-
         if (delta == 0)
         {
             delta = deltaAmount > 0 ? 1 : -1;
@@ -461,12 +996,6 @@ public sealed class WorldSystem : MonoBehaviour
         return delta;
     }
 
-    /// <summary>
-    /// 월드 샘플 좌표 하나의 density를 읽는다.
-    ///
-    /// 청크 경계 샘플은 인접 청크와 공유되므로,
-    /// 월드 샘플 좌표를 대표 청크로 변환한 뒤 그 청크의 로컬 샘플 좌표로 다시 읽는다.
-    /// </summary>
     private bool TryGetWorldSampleDensity(int worldSampleX, int sampleY, int worldSampleZ, out byte density)
     {
         density = WorldConstants.EmptyDensity;
@@ -495,12 +1024,6 @@ public sealed class WorldSystem : MonoBehaviour
         return true;
     }
 
-    /// <summary>
-    /// 월드 샘플 하나의 density 변화를 그 샘플을 공유하는 모든 청크에 반영한다.
-    ///
-    /// 예를 들어 X 또는 Z가 청크 경계에 놓인 샘플은 최대 4개 청크가 동시에 공유할 수 있다.
-    /// 이 메서드는 그 모든 청크를 동일한 새 값으로 맞춰 seam을 방지한다.
-    /// </summary>
     private void ApplyDeltaToSharedSample(int worldSampleX, int sampleY, int worldSampleZ, int delta)
     {
         bool isBoundaryX = WorldMath.PositiveMod(worldSampleX, WorldConstants.ChunkSizeX) == 0;
@@ -555,31 +1078,6 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 청크 내부 로컬 샘플 하나에 density 변화를 적용한다.
-    /// 실제 값이 바뀐 경우에만 true를 반환한다.
-    /// </summary>
-    private static bool ApplyDeltaToLocalSample(ChunkData chunk, int localSampleX, int sampleY, int localSampleZ, int delta)
-    {
-        byte oldValue = chunk.GetDensity(localSampleX, sampleY, localSampleZ);
-        int newValue = Mathf.Clamp(oldValue + delta, WorldConstants.EmptyDensity, WorldConstants.FullDensity);
-
-        if (newValue == oldValue)
-        {
-            return false;
-        }
-
-        chunk.SetDensity(localSampleX, sampleY, localSampleZ, (byte)newValue);
-        MarkSampleAffectedSubChunks(chunk, sampleY);
-        return true;
-    }
-
-    /// <summary>
-    /// 샘플 하나가 바뀌었을 때 그 샘플을 참조하는 서브청크를 dirty 처리한다.
-    ///
-    /// 샘플은 위아래 두 셀 층에 동시에 영향을 줄 수 있으므로
-    /// sampleY와 sampleY - 1이 속한 서브청크를 함께 표시한다.
-    /// </summary>
     private static void MarkSampleAffectedSubChunks(ChunkData chunk, int sampleY)
     {
         if (sampleY <= 0)
@@ -593,5 +1091,56 @@ public sealed class WorldSystem : MonoBehaviour
 
         chunk.MarkSubChunkDirty(WorldMath.CellYToSubChunkIndex(cellYUpper));
         chunk.MarkSubChunkDirty(WorldMath.CellYToSubChunkIndex(cellYLower));
+    }
+
+    private void CompleteAndDisposePendingJobs()
+    {
+        foreach (PendingChunkGeneration operation in _pendingGenerations.Values)
+        {
+            operation.Handle.Complete();
+        }
+
+        _pendingGenerations.Clear();
+
+        foreach (PendingChunkMeshBuild build in _pendingChunkMeshBuilds.Values)
+        {
+            if (build.SubChunkBuilds == null)
+            {
+                continue;
+            }
+
+            for (int i = 0; i < build.SubChunkBuilds.Length; i++)
+            {
+                PendingSubChunkBuild operation = build.SubChunkBuilds[i];
+                if (operation == null)
+                {
+                    continue;
+                }
+
+                operation.Handle.Complete();
+            }
+
+            build.Dispose();
+        }
+
+        _pendingChunkMeshBuilds.Clear();
+    }
+
+    private bool HasPendingJobsForChunk(ChunkCoord coord)
+    {
+        return _pendingGenerations.ContainsKey(coord) || _pendingChunkMeshBuilds.ContainsKey(coord);
+    }
+
+    private static int ChunkDistanceSq(ChunkCoord coord, ChunkCoord center)
+    {
+        int dx = coord.X - center.X;
+        int dz = coord.Z - center.Z;
+        return dx * dx + dz * dz;
+    }
+
+    private static int ChunkCountForRadius(int radius)
+    {
+        int diameter = radius * 2 + 1;
+        return diameter * diameter;
     }
 }
