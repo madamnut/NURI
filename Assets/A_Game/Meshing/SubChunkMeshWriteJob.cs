@@ -21,6 +21,8 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
     [ReadOnly] public NativeArray<int> TriangleOffsets;
 
     public int SubChunkIndex;
+    public float BlendDeadZoneMin;
+    public float BlendDeadZoneMax;
 
     [NativeDisableParallelForRestriction]
     [WriteOnly] public NativeArray<float3> Vertices;
@@ -32,7 +34,7 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
     [WriteOnly] public NativeArray<int> Indices;
 
     [NativeDisableParallelForRestriction]
-    [WriteOnly] public NativeArray<float2> MaterialInfo;
+    [WriteOnly] public NativeArray<float4> MaterialInfo;
 
     public void Execute(int index)
     {
@@ -83,8 +85,6 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
         int triangleStart = TriangleOffsets[index];
         int localTriangleIndex = 0;
         int rowIndex = cubeIndex * MarchingCubesTables.TriangleTableStride;
-        float2 materialInfo = new float2(ReadMaterial(localX, sampleBaseY, localZ), 0f);
-
         for (int i = 0; i < MarchingCubesTables.TriangleTableStride; i += 3)
         {
             int e0 = MarchingCubesTables.TriangleTable[rowIndex + i];
@@ -108,6 +108,9 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
             int triangleIndex = triangleStart + localTriangleIndex;
             int vertexStart = triangleIndex * 3;
             float3 normal = math.normalize(math.cross(v1 - v0, v2 - v0));
+            float4 materialInfo0 = BuildBlendInfoForEdge(e0, localX, sampleBaseY, localZ);
+            float4 materialInfo1 = BuildBlendInfoForEdge(e1, localX, sampleBaseY, localZ);
+            float4 materialInfo2 = BuildBlendInfoForEdge(e2, localX, sampleBaseY, localZ);
 
             Vertices[vertexStart + 0] = v0;
             Vertices[vertexStart + 1] = v1;
@@ -121,9 +124,9 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
             Indices[vertexStart + 1] = vertexStart + 1;
             Indices[vertexStart + 2] = vertexStart + 2;
 
-            MaterialInfo[vertexStart + 0] = materialInfo;
-            MaterialInfo[vertexStart + 1] = materialInfo;
-            MaterialInfo[vertexStart + 2] = materialInfo;
+            MaterialInfo[vertexStart + 0] = materialInfo0;
+            MaterialInfo[vertexStart + 1] = materialInfo1;
+            MaterialInfo[vertexStart + 2] = materialInfo2;
 
             localTriangleIndex++;
         }
@@ -139,6 +142,120 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
         return MaterialIds[WorldMath.CellIndex(cellX, cellY, cellZ)];
     }
 
+    private float4 BuildBlendInfoForEdge(int edgeIndex, int cellX, int cellY, int cellZ)
+    {
+        float dirtWeight = 0f;
+        float rockWeight = 0f;
+
+        switch (edgeIndex)
+        {
+            case 0:
+                AccumulateEdgeMaterial(cellX, cellY - 1, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY - 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 1:
+                AccumulateEdgeMaterial(cellX, cellY - 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY - 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 2:
+                AccumulateEdgeMaterial(cellX, cellY - 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY - 1, cellZ + 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ + 1, ref dirtWeight, ref rockWeight);
+                break;
+            case 3:
+                AccumulateEdgeMaterial(cellX - 1, cellY - 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY - 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX - 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 4:
+                AccumulateEdgeMaterial(cellX, cellY, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY + 1, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY + 1, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 5:
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY + 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY + 1, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 6:
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ + 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY + 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY + 1, cellZ + 1, ref dirtWeight, ref rockWeight);
+                break;
+            case 7:
+                AccumulateEdgeMaterial(cellX - 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX - 1, cellY + 1, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY + 1, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 8:
+                AccumulateEdgeMaterial(cellX - 1, cellY, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX - 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 9:
+                AccumulateEdgeMaterial(cellX, cellY, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY, cellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 10:
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ + 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX + 1, cellY, cellZ + 1, ref dirtWeight, ref rockWeight);
+                break;
+            case 11:
+                AccumulateEdgeMaterial(cellX - 1, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX - 1, cellY, cellZ + 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(cellX, cellY, cellZ + 1, ref dirtWeight, ref rockWeight);
+                break;
+        }
+
+        float totalWeight = dirtWeight + rockWeight;
+        if (totalWeight <= 0.0001f)
+        {
+            byte materialId = ReadMaterial(cellX, cellY, cellZ);
+            float rockOnly = materialId == TerrainDensityUtility.RockMaterialId ? 1f : 0f;
+            return new float4(TerrainDensityUtility.DirtMaterialId, TerrainDensityUtility.RockMaterialId, rockOnly, 0f);
+        }
+
+        float rockBlend = rockWeight / totalWeight;
+        rockBlend = ApplyBlendDeadZone(rockBlend, BlendDeadZoneMin, BlendDeadZoneMax);
+        return new float4(TerrainDensityUtility.DirtMaterialId, TerrainDensityUtility.RockMaterialId, rockBlend, 0f);
+    }
+
+    private void AccumulateEdgeMaterial(int cellX, int cellY, int cellZ, ref float dirtWeight, ref float rockWeight)
+    {
+        if (cellX < 0 || cellX >= WorldConstants.ChunkSizeX ||
+            cellY < 0 || cellY >= WorldConstants.ChunkSizeY ||
+            cellZ < 0 || cellZ >= WorldConstants.ChunkSizeZ)
+        {
+            return;
+        }
+
+        byte materialId = ReadMaterial(cellX, cellY, cellZ);
+        if (materialId == TerrainDensityUtility.DirtMaterialId)
+        {
+            dirtWeight += 1f;
+        }
+        else if (materialId == TerrainDensityUtility.RockMaterialId)
+        {
+            rockWeight += 1f;
+        }
+    }
+
     private static bool IsValidTriangle(float3 a, float3 b, float3 c)
     {
         const float epsilon = 0.000001f;
@@ -150,6 +267,26 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
 
         float3 normal = math.cross(b - a, c - a);
         return math.lengthsq(normal) > epsilon;
+    }
+
+    private static float ApplyBlendDeadZone(float weight, float min, float max)
+    {
+        if (weight <= min)
+        {
+            return 0f;
+        }
+
+        if (weight >= max)
+        {
+            return 1f;
+        }
+
+        if (max <= min)
+        {
+            return weight >= max ? 1f : 0f;
+        }
+
+        return math.unlerp(min, max, weight);
     }
 
     private static float3 InterpolateEdge(

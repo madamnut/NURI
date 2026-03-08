@@ -43,6 +43,10 @@ public sealed class WorldSystem : MonoBehaviour
     [SerializeField] private bool _applyMeshCollider = true;
     [SerializeField, Min(0)] private int _maxChunkViewPoolCount = 256;
 
+    [Header("Material Blending")]
+    [SerializeField, Range(0f, 1f)] private float _blendDeadZoneMin = 0.2f;
+    [SerializeField, Range(0f, 1f)] private float _blendDeadZoneMax = 0.8f;
+
     private sealed class PendingChunkGeneration
     {
         public ChunkCoord Coord;
@@ -123,6 +127,7 @@ public sealed class WorldSystem : MonoBehaviour
     private readonly List<ChunkCoord> _completedGenerationBuffer = new List<ChunkCoord>();
     private readonly List<ChunkCoord> _completedChunkMeshBuffer = new List<ChunkCoord>();
     private readonly Stack<ChunkView> _chunkViewPool = new Stack<ChunkView>();
+    private readonly HashSet<Vector3Int> _preExistingSolidCells = new HashSet<Vector3Int>();
 
     private bool _hasStreamingCenter;
     private ChunkCoord _streamingCenter;
@@ -139,6 +144,8 @@ public sealed class WorldSystem : MonoBehaviour
     public int GenerationSeed => _generationSettings.Seed;
     public int LoadRadius => Mathf.Max(0, _loadRadius);
     private int MaxChunkViewPoolCount => Mathf.Max(0, _maxChunkViewPoolCount);
+    private float BlendDeadZoneMin => Mathf.Clamp01(Mathf.Min(_blendDeadZoneMin, _blendDeadZoneMax));
+    private float BlendDeadZoneMax => Mathf.Clamp01(Mathf.Max(_blendDeadZoneMin, _blendDeadZoneMax));
 
     [ContextMenu("Generate Initial World")]
     public void GenerateInitialWorld()
@@ -261,6 +268,11 @@ public sealed class WorldSystem : MonoBehaviour
 
     public void ApplyOrientedBrush(Vector3 worldPosition, Vector3 surfaceNormal, float radius, int deltaAmount)
     {
+        ApplyOrientedBrush(worldPosition, surfaceNormal, radius, deltaAmount, 0);
+    }
+
+    public void ApplyOrientedBrush(Vector3 worldPosition, Vector3 surfaceNormal, float radius, int deltaAmount, byte paintMaterialId)
+    {
         if (!HasGeneratedWorld || radius <= 0f || deltaAmount == 0)
         {
             return;
@@ -284,12 +296,13 @@ public sealed class WorldSystem : MonoBehaviour
             worldPosition,
             surfaceNormal,
             radius,
-            deltaAmount);
+            deltaAmount,
+            paintMaterialId);
     }
 
     public void ApplySphereBrush(Vector3 worldPosition, float radius, int deltaAmount)
     {
-        ApplyOrientedBrush(worldPosition, Vector3.up, radius, deltaAmount);
+        ApplyOrientedBrush(worldPosition, Vector3.up, radius, deltaAmount, 0);
     }
 
     private void Update()
@@ -922,6 +935,8 @@ public sealed class WorldSystem : MonoBehaviour
                         TriangleCounts = operation.TriangleCounts,
                         TriangleOffsets = operation.TriangleOffsets,
                         SubChunkIndex = operation.SubChunkIndex,
+                        BlendDeadZoneMin = BlendDeadZoneMin,
+                        BlendDeadZoneMax = BlendDeadZoneMax,
                         Vertices = operation.MeshData.Vertices,
                         Normals = operation.MeshData.Normals,
                         Indices = operation.MeshData.Indices,
@@ -940,6 +955,8 @@ public sealed class WorldSystem : MonoBehaviour
                         HorizontalStep = horizontalStep,
                         CellsX = cellsX,
                         CellsZ = cellsZ,
+                        BlendDeadZoneMin = BlendDeadZoneMin,
+                        BlendDeadZoneMax = BlendDeadZoneMax,
                         TriangleCounts = operation.TriangleCounts,
                         TriangleOffsets = operation.TriangleOffsets,
                         Vertices = operation.MeshData.Vertices,
@@ -1095,6 +1112,8 @@ public sealed class WorldSystem : MonoBehaviour
                     TriangleCounts = triangleCounts,
                     TriangleOffsets = triangleOffsets,
                     SubChunkIndex = subChunkIndex,
+                    BlendDeadZoneMin = BlendDeadZoneMin,
+                    BlendDeadZoneMax = BlendDeadZoneMax,
                     Vertices = meshData.Vertices,
                     Normals = meshData.Normals,
                     Indices = meshData.Indices,
@@ -1131,9 +1150,23 @@ public sealed class WorldSystem : MonoBehaviour
         Vector3 brushCenter,
         Vector3 surfaceNormal,
         float radius,
-        int deltaAmount)
+        int deltaAmount,
+        byte paintMaterialId)
     {
         _modifiedChunks.Clear();
+        _preExistingSolidCells.Clear();
+
+        if (deltaAmount > 0 && paintMaterialId != 0)
+        {
+            CacheSolidCellsInBounds(
+                minSampleX,
+                maxSampleX,
+                minSampleY,
+                maxSampleY,
+                minSampleZ,
+                maxSampleZ);
+        }
+
         ModifySharedSamplesInBounds(
             minSampleX,
             maxSampleX,
@@ -1146,6 +1179,21 @@ public sealed class WorldSystem : MonoBehaviour
             radius,
             deltaAmount);
 
+        if (deltaAmount > 0 && paintMaterialId != 0)
+        {
+            PaintMaterialsInBounds(
+                minSampleX,
+                maxSampleX,
+                minSampleY,
+                maxSampleY,
+                minSampleZ,
+                maxSampleZ,
+                brushCenter,
+                radius,
+                paintMaterialId,
+                _preExistingSolidCells);
+        }
+
         foreach (ChunkCoord coord in _modifiedChunks)
         {
             if (_chunkStore.TryGet(coord, out ChunkData dirtyChunk) &&
@@ -1154,6 +1202,146 @@ public sealed class WorldSystem : MonoBehaviour
                 RebuildDirtySubChunks(dirtyChunk, dirtyView, _applyMeshCollider);
             }
         }
+    }
+
+    private void CacheSolidCellsInBounds(
+        int minSampleX,
+        int maxSampleX,
+        int minSampleY,
+        int maxSampleY,
+        int minSampleZ,
+        int maxSampleZ)
+    {
+        int minCellX = minSampleX - 1;
+        int maxCellX = maxSampleX;
+        int minCellY = Mathf.Max(0, minSampleY - 1);
+        int maxCellY = Mathf.Min(WorldConstants.ChunkSizeY - 1, maxSampleY);
+        int minCellZ = minSampleZ - 1;
+        int maxCellZ = maxSampleZ;
+
+        for (int worldCellZ = minCellZ; worldCellZ <= maxCellZ; worldCellZ++)
+        {
+            for (int cellY = minCellY; cellY <= maxCellY; cellY++)
+            {
+                for (int worldCellX = minCellX; worldCellX <= maxCellX; worldCellX++)
+                {
+                    if (IsWorldCellSolid(worldCellX, cellY, worldCellZ))
+                    {
+                        _preExistingSolidCells.Add(new Vector3Int(worldCellX, cellY, worldCellZ));
+                    }
+                }
+            }
+        }
+    }
+
+    private void PaintMaterialsInBounds(
+        int minSampleX,
+        int maxSampleX,
+        int minSampleY,
+        int maxSampleY,
+        int minSampleZ,
+        int maxSampleZ,
+        Vector3 brushCenter,
+        float radius,
+        byte materialId,
+        HashSet<Vector3Int> preExistingSolidCells)
+    {
+        int minCellX = minSampleX - 1;
+        int maxCellX = maxSampleX;
+        int minCellY = Mathf.Max(0, minSampleY - 1);
+        int maxCellY = Mathf.Min(WorldConstants.ChunkSizeY - 1, maxSampleY);
+        int minCellZ = minSampleZ - 1;
+        int maxCellZ = maxSampleZ;
+        float radiusSq = radius * radius;
+
+        for (int worldCellZ = minCellZ; worldCellZ <= maxCellZ; worldCellZ++)
+        {
+            for (int cellY = minCellY; cellY <= maxCellY; cellY++)
+            {
+                for (int worldCellX = minCellX; worldCellX <= maxCellX; worldCellX++)
+                {
+                    Vector3 cellCenter = new Vector3(worldCellX + 0.5f, cellY + 0.5f, worldCellZ + 0.5f);
+                    if ((cellCenter - brushCenter).sqrMagnitude > radiusSq)
+                    {
+                        continue;
+                    }
+
+                    Vector3Int cellCoord = new Vector3Int(worldCellX, cellY, worldCellZ);
+                    if (preExistingSolidCells.Contains(cellCoord) || !IsWorldCellSolid(worldCellX, cellY, worldCellZ))
+                    {
+                        continue;
+                    }
+
+                    if (!TrySetWorldCellMaterial(worldCellX, cellY, worldCellZ, materialId))
+                    {
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    private bool TrySetWorldCellMaterial(int worldX, int worldY, int worldZ, byte materialId)
+    {
+        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
+        {
+            return false;
+        }
+
+        ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldX, worldZ);
+        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+        {
+            return false;
+        }
+
+        Vector3Int localCell = WorldMath.WorldCellToLocalCell(worldX, worldY, worldZ);
+        if (localCell.x < 0 || localCell.x >= WorldConstants.ChunkSizeX ||
+            localCell.z < 0 || localCell.z >= WorldConstants.ChunkSizeZ)
+        {
+            return false;
+        }
+
+        if (chunk.GetMaterialId(localCell.x, localCell.y, localCell.z) == materialId)
+        {
+            return false;
+        }
+
+        chunk.SetMaterialId(localCell.x, localCell.y, localCell.z, materialId);
+        chunk.MarkSubChunkDirty(WorldMath.CellYToSubChunkIndex(localCell.y));
+        _modifiedChunks.Add(coord);
+        return true;
+    }
+
+    private bool IsWorldCellSolid(int worldX, int worldY, int worldZ)
+    {
+        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
+        {
+            return false;
+        }
+
+        if (!TryGetWorldSampleDensity(worldX + 0, worldY + 0, worldZ + 0, out byte d0) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 0, worldZ + 0, out byte d1) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 0, worldZ + 1, out byte d2) ||
+            !TryGetWorldSampleDensity(worldX + 0, worldY + 0, worldZ + 1, out byte d3) ||
+            !TryGetWorldSampleDensity(worldX + 0, worldY + 1, worldZ + 0, out byte d4) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 1, worldZ + 0, out byte d5) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 1, worldZ + 1, out byte d6) ||
+            !TryGetWorldSampleDensity(worldX + 0, worldY + 1, worldZ + 1, out byte d7))
+        {
+            return false;
+        }
+
+        int cubeIndex = 0;
+        if (MarchingCubesCommon.IsInside(d0)) cubeIndex |= 1 << 0;
+        if (MarchingCubesCommon.IsInside(d1)) cubeIndex |= 1 << 1;
+        if (MarchingCubesCommon.IsInside(d2)) cubeIndex |= 1 << 2;
+        if (MarchingCubesCommon.IsInside(d3)) cubeIndex |= 1 << 3;
+        if (MarchingCubesCommon.IsInside(d4)) cubeIndex |= 1 << 4;
+        if (MarchingCubesCommon.IsInside(d5)) cubeIndex |= 1 << 5;
+        if (MarchingCubesCommon.IsInside(d6)) cubeIndex |= 1 << 6;
+        if (MarchingCubesCommon.IsInside(d7)) cubeIndex |= 1 << 7;
+
+        return cubeIndex != 0;
     }
 
     private void ModifySharedSamplesInBounds(

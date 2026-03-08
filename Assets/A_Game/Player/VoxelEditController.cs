@@ -12,9 +12,12 @@ using UnityEngine.InputSystem;
 /// </summary>
 public sealed class VoxelEditController : MonoBehaviour
 {
+    private const byte DirtMaterialId = TerrainDensityUtility.DirtMaterialId;
+    private const byte RockMaterialId = TerrainDensityUtility.RockMaterialId;
+
     [Header("참조")]
-    [SerializeField] private Camera _camera;
     [SerializeField] private WorldSystem _worldSystem;
+    [SerializeField] private PlayerController _playerController;
 
     [Header("브러시 설정")]
     [SerializeField] private float _brushRadius = 3f;
@@ -27,17 +30,14 @@ public sealed class VoxelEditController : MonoBehaviour
 
     private float _editAccumulator;
     private float _nextDebugLogTime;
+    private byte _selectedMaterialId = DirtMaterialId;
 
     public float MaxRayDistance => _maxRayDistance;
     public LayerMask HitMask => _hitMask;
+    public byte SelectedMaterialId => _selectedMaterialId;
 
     private void Awake()
     {
-        if (_camera == null)
-        {
-            _camera = Camera.main;
-        }
-
         if (_worldSystem == null)
         {
             _worldSystem = FindFirstObjectByType<WorldSystem>();
@@ -46,8 +46,26 @@ public sealed class VoxelEditController : MonoBehaviour
 
     private void Update()
     {
+        HandleMaterialModeShortcuts();
         HandleRebuildShortcut();
         HandleContinuousEdit();
+    }
+
+    private void HandleMaterialModeShortcuts()
+    {
+        if (Keyboard.current == null)
+        {
+            return;
+        }
+
+        if (Keyboard.current.digit1Key.wasPressedThisFrame)
+        {
+            _selectedMaterialId = DirtMaterialId;
+        }
+        else if (Keyboard.current.digit2Key.wasPressedThisFrame)
+        {
+            _selectedMaterialId = RockMaterialId;
+        }
     }
 
     /// <summary>
@@ -103,7 +121,8 @@ public sealed class VoxelEditController : MonoBehaviour
         }
 
         _editAccumulator -= delta;
-        _worldSystem.ApplyOrientedBrush(hit.point, hit.normal, _brushRadius, sign * delta);
+        byte paintMaterialId = sign > 0 ? _selectedMaterialId : (byte)0;
+        _worldSystem.ApplyOrientedBrush(hit.point, hit.normal, _brushRadius, sign * delta, paintMaterialId);
     }
 
     /// <summary>
@@ -113,13 +132,12 @@ public sealed class VoxelEditController : MonoBehaviour
     {
         hit = default;
 
-        Camera cam = _camera != null ? _camera : Camera.main;
-        if (cam == null)
+        if (_playerController == null)
         {
             return false;
         }
 
-        Ray ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+        Ray ray = _playerController.GetInteractionRay();
 
         if (_debugRaycast)
         {

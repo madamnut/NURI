@@ -25,6 +25,7 @@ public sealed class WorldDebugUI : MonoBehaviour
     [SerializeField] private WorldSystem _worldSystem;
     [SerializeField] private Camera _referenceCamera;
     [SerializeField] private VoxelEditController _voxelEditController;
+    [SerializeField] private PlayerController _playerController;
     [SerializeField] private GameObject _debugRoot;
     [FormerlySerializedAs("_targetText")]
     [SerializeField] private TMP_Text _leftText;
@@ -186,11 +187,28 @@ public sealed class WorldDebugUI : MonoBehaviour
         string managedMemory = FormatBytes(GC.GetTotalMemory(false));
         string allocatedMemory = FormatBytes(Profiler.GetTotalAllocatedMemoryLong());
         string reservedMemory = FormatBytes(Profiler.GetTotalReservedMemoryLong());
+        byte selectedMaterialId = _voxelEditController != null ? _voxelEditController.SelectedMaterialId : (byte)0;
+        string cameraModeLabel = _playerController != null ? _playerController.CurrentCameraViewModeLabel : "Unknown";
+        string movementModeLabel = _playerController != null ? _playerController.CurrentMovementModeLabel : "Unknown";
+        Vector3 feetPosition = _playerController != null ? _playerController.FeetPosition : Vector3.zero;
+        string selectedMaterialLabel = "None";
+        if (selectedMaterialId != 0 && _worldSystem != null && _worldSystem.TerrainMaterialLibrary != null)
+        {
+            selectedMaterialLabel = _worldSystem.TerrainMaterialLibrary.GetDisplayName(selectedMaterialId);
+        }
+        else if (selectedMaterialId != 0)
+        {
+            selectedMaterialLabel = selectedMaterialId.ToString();
+        }
         string leftText =
             $"FPS: {_currentFps}\n" +
+            $"Camera: {cameraModeLabel}\n" +
+            $"Mode: {movementModeLabel}\n" +
+            $"XYZ(Feet): {feetPosition.x:F3}/{feetPosition.y:F3}/{feetPosition.z:F3}\n" +
             $"{_currentTargetLabel}\n" +
             $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}\n" +
             $"LodBounds: {GetLodBoundaryModeLabel()}\n" +
+            $"Paint: {selectedMaterialLabel} (ID: {selectedMaterialId})\n" +
             $"Seed: {(_worldSystem != null ? _worldSystem.GenerationSeed : 0)}";
 
         string rightText =
@@ -222,8 +240,7 @@ public sealed class WorldDebugUI : MonoBehaviour
 
     private string BuildTargetLabel()
     {
-        Camera targetCamera = _referenceCamera != null ? _referenceCamera : Camera.main;
-        if (_worldSystem == null || targetCamera == null)
+        if (_worldSystem == null)
         {
             return "Target: Air";
         }
@@ -231,7 +248,22 @@ public sealed class WorldDebugUI : MonoBehaviour
         float maxDistance = _voxelEditController != null ? _voxelEditController.MaxRayDistance : 500f;
         LayerMask hitMask = _voxelEditController != null ? _voxelEditController.HitMask : ~0;
 
-        Ray ray = targetCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+        Ray ray;
+        if (_playerController != null)
+        {
+            ray = _playerController.GetInteractionRay();
+        }
+        else
+        {
+            Camera targetCamera = _referenceCamera != null ? _referenceCamera : Camera.main;
+            if (targetCamera == null)
+            {
+                return "Target: Air";
+            }
+
+            ray = targetCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+        }
+
         if (!Physics.Raycast(ray, out RaycastHit hit, Mathf.Max(0.1f, maxDistance), hitMask, QueryTriggerInteraction.Ignore))
         {
             return "Target: Air";

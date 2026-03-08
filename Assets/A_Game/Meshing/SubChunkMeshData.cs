@@ -10,7 +10,7 @@ public sealed class SubChunkMeshData : IDisposable
     public NativeArray<float3> Vertices;
     public NativeArray<float3> Normals;
     public NativeArray<int> Indices;
-    public NativeArray<float2> MaterialInfo;
+    public NativeArray<float4> MaterialInfo;
 
     public SubChunkMeshData(int triangleCount, Allocator allocator)
     {
@@ -18,7 +18,7 @@ public sealed class SubChunkMeshData : IDisposable
         Vertices = new NativeArray<float3>(elementCount, allocator);
         Normals = new NativeArray<float3>(elementCount, allocator);
         Indices = new NativeArray<int>(elementCount, allocator);
-        MaterialInfo = new NativeArray<float2>(elementCount, allocator);
+        MaterialInfo = new NativeArray<float4>(elementCount, allocator);
     }
 
     public bool IsCreated => Vertices.IsCreated && Normals.IsCreated && Indices.IsCreated && MaterialInfo.IsCreated;

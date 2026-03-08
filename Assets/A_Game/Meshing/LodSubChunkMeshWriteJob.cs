@@ -15,6 +15,8 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
     public int HorizontalStep;
     public int CellsX;
     public int CellsZ;
+    public float BlendDeadZoneMin;
+    public float BlendDeadZoneMax;
 
     [ReadOnly] public NativeArray<byte> TriangleCounts;
     [ReadOnly] public NativeArray<int> TriangleOffsets;
@@ -29,7 +31,7 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
     [WriteOnly] public NativeArray<int> Indices;
 
     [NativeDisableParallelForRestriction]
-    [WriteOnly] public NativeArray<float2> MaterialInfo;
+    [WriteOnly] public NativeArray<float4> MaterialInfo;
 
     public void Execute(int index)
     {
@@ -86,7 +88,6 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
         int triangleStart = TriangleOffsets[index];
         int localTriangleIndex = 0;
         int rowIndex = cubeIndex * MarchingCubesTables.TriangleTableStride;
-        float2 materialInfo = new float2(TerrainDensityUtility.SampleMaterialId(Settings, worldBaseX, sampleBaseY, worldBaseZ), 0f);
 
         for (int i = 0; i < MarchingCubesTables.TriangleTableStride; i += 3)
         {
@@ -111,6 +112,9 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
             int triangleIndex = triangleStart + localTriangleIndex;
             int vertexStart = triangleIndex * 3;
             float3 normal = math.normalize(math.cross(v1 - v0, v2 - v0));
+            float4 materialInfo0 = BuildBlendInfoForEdge(e0, worldBaseX, sampleBaseY, worldBaseZ);
+            float4 materialInfo1 = BuildBlendInfoForEdge(e1, worldBaseX, sampleBaseY, worldBaseZ);
+            float4 materialInfo2 = BuildBlendInfoForEdge(e2, worldBaseX, sampleBaseY, worldBaseZ);
 
             Vertices[vertexStart + 0] = v0;
             Vertices[vertexStart + 1] = v1;
@@ -124,11 +128,123 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
             Indices[vertexStart + 1] = vertexStart + 1;
             Indices[vertexStart + 2] = vertexStart + 2;
 
-            MaterialInfo[vertexStart + 0] = materialInfo;
-            MaterialInfo[vertexStart + 1] = materialInfo;
-            MaterialInfo[vertexStart + 2] = materialInfo;
+            MaterialInfo[vertexStart + 0] = materialInfo0;
+            MaterialInfo[vertexStart + 1] = materialInfo1;
+            MaterialInfo[vertexStart + 2] = materialInfo2;
 
             localTriangleIndex++;
+        }
+    }
+
+    private float4 BuildBlendInfoForEdge(int edgeIndex, int worldCellX, int cellY, int worldCellZ)
+    {
+        float dirtWeight = 0f;
+        float rockWeight = 0f;
+
+        switch (edgeIndex)
+        {
+            case 0:
+                AccumulateEdgeMaterial(worldCellX, cellY - 1, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY - 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 1:
+                AccumulateEdgeMaterial(worldCellX, cellY - 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY - 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 2:
+                AccumulateEdgeMaterial(worldCellX, cellY - 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY - 1, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                break;
+            case 3:
+                AccumulateEdgeMaterial(worldCellX - 1, cellY - 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY - 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX - 1, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 4:
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY + 1, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY + 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 5:
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY + 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY + 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 6:
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY + 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY + 1, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                break;
+            case 7:
+                AccumulateEdgeMaterial(worldCellX - 1, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX - 1, cellY + 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY + 1, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 8:
+                AccumulateEdgeMaterial(worldCellX - 1, cellY, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX - 1, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 9:
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY, worldCellZ - 1, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                break;
+            case 10:
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX + HorizontalStep, cellY, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                break;
+            case 11:
+                AccumulateEdgeMaterial(worldCellX - 1, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX - 1, cellY, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                AccumulateEdgeMaterial(worldCellX, cellY, worldCellZ + HorizontalStep, ref dirtWeight, ref rockWeight);
+                break;
+        }
+
+        float totalWeight = dirtWeight + rockWeight;
+        if (totalWeight <= 0.0001f)
+        {
+            byte materialId = TerrainDensityUtility.SampleMaterialId(Settings, worldCellX, cellY, worldCellZ);
+            float rockOnly = materialId == TerrainDensityUtility.RockMaterialId ? 1f : 0f;
+            return new float4(TerrainDensityUtility.DirtMaterialId, TerrainDensityUtility.RockMaterialId, rockOnly, 0f);
+        }
+
+        float rockBlend = rockWeight / totalWeight;
+        rockBlend = ApplyBlendDeadZone(rockBlend, BlendDeadZoneMin, BlendDeadZoneMax);
+        return new float4(TerrainDensityUtility.DirtMaterialId, TerrainDensityUtility.RockMaterialId, rockBlend, 0f);
+    }
+
+    private void AccumulateEdgeMaterial(int worldCellX, int cellY, int worldCellZ, ref float dirtWeight, ref float rockWeight)
+    {
+        if (cellY < 0 || cellY >= WorldConstants.ChunkSizeY)
+        {
+            return;
+        }
+
+        byte materialId = TerrainDensityUtility.SampleMaterialId(Settings, worldCellX, cellY, worldCellZ);
+        if (materialId == TerrainDensityUtility.DirtMaterialId)
+        {
+            dirtWeight += 1f;
+        }
+        else if (materialId == TerrainDensityUtility.RockMaterialId)
+        {
+            rockWeight += 1f;
         }
     }
 
@@ -143,6 +259,26 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
 
         float3 normal = math.cross(b - a, c - a);
         return math.lengthsq(normal) > epsilon;
+    }
+
+    private static float ApplyBlendDeadZone(float weight, float min, float max)
+    {
+        if (weight <= min)
+        {
+            return 0f;
+        }
+
+        if (weight >= max)
+        {
+            return 1f;
+        }
+
+        if (max <= min)
+        {
+            return weight >= max ? 1f : 0f;
+        }
+
+        return math.unlerp(min, max, weight);
     }
 
     private static float3 InterpolateEdge(

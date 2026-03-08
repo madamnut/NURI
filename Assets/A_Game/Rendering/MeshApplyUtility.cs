@@ -13,7 +13,7 @@ public static class MeshApplyUtility
     {
         new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, 0),
         new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, 1),
-        new VertexAttributeDescriptor(VertexAttribute.TexCoord1, VertexAttributeFormat.Float32, 2, 2)
+        new VertexAttributeDescriptor(VertexAttribute.TexCoord1, VertexAttributeFormat.Float32, 4, 2)
     };
 
     public static void ApplyToSubChunk(SubChunkView view, SubChunkMeshData meshData, bool applyCollider)
@@ -30,7 +30,7 @@ public static class MeshApplyUtility
         mesh.SetVertexBufferParams(meshData.Vertices.Length, VertexLayout);
         mesh.SetVertexBufferData(meshData.Vertices.Reinterpret<Vector3>(UnsafeUtility.SizeOf<float3>()), 0, 0, meshData.Vertices.Length, 0, MeshUpdateFlags.DontRecalculateBounds);
         mesh.SetVertexBufferData(meshData.Normals.Reinterpret<Vector3>(UnsafeUtility.SizeOf<float3>()), 0, 0, meshData.Normals.Length, 1, MeshUpdateFlags.DontRecalculateBounds);
-        mesh.SetVertexBufferData(meshData.MaterialInfo.Reinterpret<Vector2>(UnsafeUtility.SizeOf<float2>()), 0, 0, meshData.MaterialInfo.Length, 2, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetVertexBufferData(meshData.MaterialInfo.Reinterpret<Vector4>(UnsafeUtility.SizeOf<float4>()), 0, 0, meshData.MaterialInfo.Length, 2, MeshUpdateFlags.DontRecalculateBounds);
         mesh.SetIndexBufferParams(meshData.Indices.Length, IndexFormat.UInt32);
         mesh.SetIndexBufferData(meshData.Indices, 0, 0, meshData.Indices.Length, MeshUpdateFlags.DontRecalculateBounds);
         mesh.subMeshCount = 1;

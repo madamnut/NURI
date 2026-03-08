@@ -5,8 +5,8 @@ using Unity.Mathematics;
 /// </summary>
 public static class TerrainDensityUtility
 {
-    private const byte DirtMaterialId = 1;
-    private const byte RockMaterialId = 2;
+    public const byte DirtMaterialId = 1;
+    public const byte RockMaterialId = 2;
 
     public static byte SampleDensity(TerrainGenerationSettings settings, int worldX, int sampleY, int worldZ)
     {

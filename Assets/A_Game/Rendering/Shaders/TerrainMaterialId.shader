@@ -105,7 +105,7 @@ Shader "A_Game/Terrain Material Id"
             {
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
-                float2 materialInfo : TEXCOORD1;
+                float4 materialInfo : TEXCOORD1;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -114,7 +114,7 @@ Shader "A_Game/Terrain Material Id"
                 float4 positionCS : SV_POSITION;
                 float3 positionWS : TEXCOORD0;
                 float3 normalWS : TEXCOORD1;
-                float2 materialInfo : TEXCOORD2;
+                float4 materialInfo : TEXCOORD2;
                 half3 vertexLighting : TEXCOORD3;
                 half fogFactor : TEXCOORD4;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -195,21 +195,71 @@ Shader "A_Game/Terrain Material Id"
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
                 float3 geometryNormalWS = normalize(input.normalWS);
-                int sliceIndex = GetMaterialSliceIndex(input.materialInfo.x);
+                int primarySliceIndex = GetMaterialSliceIndex(input.materialInfo.x);
+                int secondarySliceIndex = GetMaterialSliceIndex(input.materialInfo.y);
+                half blendWeight = saturate(input.materialInfo.z);
 
                 half3 albedo;
                 half3 worldNormal;
                 half smoothness;
                 half occlusion;
 
-                SampleTerrainLayer(
-                    input.positionWS,
-                    geometryNormalWS,
-                    sliceIndex,
-                    albedo,
-                    worldNormal,
-                    smoothness,
-                    occlusion);
+                if (primarySliceIndex == secondarySliceIndex || blendWeight <= 0.001h)
+                {
+                    SampleTerrainLayer(
+                        input.positionWS,
+                        geometryNormalWS,
+                        primarySliceIndex,
+                        albedo,
+                        worldNormal,
+                        smoothness,
+                        occlusion);
+                }
+                else if (blendWeight >= 0.999h)
+                {
+                    SampleTerrainLayer(
+                        input.positionWS,
+                        geometryNormalWS,
+                        secondarySliceIndex,
+                        albedo,
+                        worldNormal,
+                        smoothness,
+                        occlusion);
+                }
+                else
+                {
+                    half3 primaryAlbedo;
+                    half3 primaryWorldNormal;
+                    half primarySmoothness;
+                    half primaryOcclusion;
+                    half3 secondaryAlbedo;
+                    half3 secondaryWorldNormal;
+                    half secondarySmoothness;
+                    half secondaryOcclusion;
+
+                    SampleTerrainLayer(
+                        input.positionWS,
+                        geometryNormalWS,
+                        primarySliceIndex,
+                        primaryAlbedo,
+                        primaryWorldNormal,
+                        primarySmoothness,
+                        primaryOcclusion);
+
+                    SampleTerrainLayer(
+                        input.positionWS,
+                        geometryNormalWS,
+                        secondarySliceIndex,
+                        secondaryAlbedo,
+                        secondaryWorldNormal,
+                        secondarySmoothness,
+                        secondaryOcclusion);
+
+                    albedo = lerp(primaryAlbedo, secondaryAlbedo, blendWeight);
+                    worldNormal = normalize(lerp(primaryWorldNormal, secondaryWorldNormal, blendWeight));
+                    smoothness = lerp(primarySmoothness, secondarySmoothness, blendWeight);
+                    occlusion = lerp(primaryOcclusion, secondaryOcclusion, blendWeight);
+                }
 
                 SurfaceData surfaceData = (SurfaceData)0;
                 surfaceData.albedo = albedo;
