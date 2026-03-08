@@ -20,6 +20,7 @@ public static class MeshApplyUtility
         mesh.Clear();
         mesh.vertices = ToVector3Array(meshData.Vertices);
         mesh.triangles = ToIntArray(meshData.Indices);
+        mesh.uv2 = ToVector2Array(meshData.MaterialInfo);
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
 
@@ -49,6 +50,18 @@ public static class MeshApplyUtility
         for (int i = 0; i < source.Length; i++)
         {
             array[i] = source[i];
+        }
+
+        return array;
+    }
+
+    private static Vector2[] ToVector2Array(NativeArray<float2> source)
+    {
+        Vector2[] array = new Vector2[source.Length];
+        for (int i = 0; i < source.Length; i++)
+        {
+            float2 value = source[i];
+            array[i] = new Vector2(value.x, value.y);
         }
 
         return array;

@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Rock
-  m_Shader: {fileID: -6465566751694194690, guid: b7828116ee294254a8118648cea3ba80, type: 3}
+  m_Name: SolidMat
+  m_Shader: {fileID: 4800000, guid: 2c5d4d8b0fe54754ba13c51e1f5d1d68, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -25,11 +25,19 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _AOMap:
-        m_Texture: {fileID: 2800000, guid: c8bc20d07d2f41a43987c638436ae01d, type: 3}
+        m_Texture: {fileID: 2800000, guid: 570cfc012e6c2ee4b873fca30ac3b065, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _AOMapArray:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _BaseMap:
-        m_Texture: {fileID: 2800000, guid: dd0586e2dfaaa7a43ba8615e267359fd, type: 3}
+        m_Texture: {fileID: 2800000, guid: bb44acf5468268a46ac32d9606dde012, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _BaseMapArray:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _BumpMap:
@@ -53,7 +61,11 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _HeightMap:
-        m_Texture: {fileID: 2800000, guid: 85bec6c6222b79641a2aecac1886ca9b, type: 3}
+        m_Texture: {fileID: 2800000, guid: e0be64fb532d8a4419596698bf4b3f95, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _HeightMapArray:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _MainTex:
@@ -65,7 +77,11 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _NormalMap:
-        m_Texture: {fileID: 2800000, guid: a49831f53b8f8824f87121c1c20e626e, type: 3}
+        m_Texture: {fileID: 2800000, guid: 6a2484d1d56644c4e91af7fe2b1bd511, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _NormalMapArray:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _OcclusionMap:
@@ -76,8 +92,32 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
-    - _RoughnessMap:
+    - _RockAOMap:
+        m_Texture: {fileID: 2800000, guid: c8bc20d07d2f41a43987c638436ae01d, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RockBaseMap:
+        m_Texture: {fileID: 2800000, guid: dd0586e2dfaaa7a43ba8615e267359fd, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RockHeightMap:
+        m_Texture: {fileID: 2800000, guid: 85bec6c6222b79641a2aecac1886ca9b, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RockNormalMap:
+        m_Texture: {fileID: 2800000, guid: a49831f53b8f8824f87121c1c20e626e, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RockRoughnessMap:
         m_Texture: {fileID: 2800000, guid: 7c6ed4b1b8b88634697f1da42f10f104, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RoughnessMap:
+        m_Texture: {fileID: 2800000, guid: e32c5756b0ea86640a4db63c88b8f64b, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RoughnessMapArray:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _SpecGlossMap:
@@ -119,6 +159,7 @@ Material:
     - _Glossiness: 0
     - _GlossyReflections: 0
     - _HeightStrength: 0
+    - _MaterialCount: 2
     - _Metallic: 0
     - _NormalStrength: 1
     - _OcclusionStrength: 1
@@ -141,6 +182,7 @@ Material:
     - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
+    - _RockBaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

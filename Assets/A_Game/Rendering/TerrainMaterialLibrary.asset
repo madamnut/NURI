@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d2eb08d9f2904c42a8f4f58aaf43deab, type: 3}
+  m_Name: TerrainMaterialLibrary
+  m_EditorClassIdentifier: 
+  _materials:
+  - Id: 1
+    BaseColor: {r: 1, g: 1, b: 1, a: 1}
+    BaseMap: {fileID: 2800000, guid: bb44acf5468268a46ac32d9606dde012, type: 3}
+    NormalMap: {fileID: 2800000, guid: 6a2484d1d56644c4e91af7fe2b1bd511, type: 3}
+    RoughnessMap: {fileID: 2800000, guid: e32c5756b0ea86640a4db63c88b8f64b, type: 3}
+    AOMap: {fileID: 2800000, guid: 570cfc012e6c2ee4b873fca30ac3b065, type: 3}
+    HeightMap: {fileID: 2800000, guid: e0be64fb532d8a4419596698bf4b3f95, type: 3}
+  - Id: 2
+    BaseColor: {r: 1, g: 1, b: 1, a: 1}
+    BaseMap: {fileID: 2800000, guid: dd0586e2dfaaa7a43ba8615e267359fd, type: 3}
+    NormalMap: {fileID: 2800000, guid: a49831f53b8f8824f87121c1c20e626e, type: 3}
+    RoughnessMap: {fileID: 2800000, guid: 7c6ed4b1b8b88634697f1da42f10f104, type: 3}
+    AOMap: {fileID: 2800000, guid: c8bc20d07d2f41a43987c638436ae01d, type: 3}
+    HeightMap: {fileID: 2800000, guid: 85bec6c6222b79641a2aecac1886ca9b, type: 3}

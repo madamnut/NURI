@@ -32,11 +32,13 @@ public sealed class WorldSystem : MonoBehaviour
     [SerializeField] private ChunkView _chunkViewPrefab;
     [SerializeField] private Transform _chunkRoot;
     [SerializeField] private Material _terrainMaterial;
+    [SerializeField] private TerrainMaterialLibrary _terrainMaterialLibrary;
     [SerializeField] private bool _applyMeshCollider = true;
 
     private readonly ChunkDataStore _chunkStore = new ChunkDataStore();
     private readonly Dictionary<ChunkCoord, ChunkView> _chunkViews = new Dictionary<ChunkCoord, ChunkView>();
     private readonly HashSet<ChunkCoord> _modifiedChunks = new HashSet<ChunkCoord>();
+    private TerrainMaterialLibrary.RuntimeResources _terrainMaterialResources;
 
     public int LoadedChunkCount => _chunkStore.Count;
     public bool HasGeneratedWorld { get; private set; }
@@ -44,6 +46,8 @@ public sealed class WorldSystem : MonoBehaviour
     [ContextMenu("Generate Initial World")]
     public void GenerateInitialWorld()
     {
+        ReleaseTerrainMaterialResources();
+        EnsureTerrainMaterialConfigured();
         ClearWorld();
 
         Transform root = _chunkRoot != null ? _chunkRoot : transform;
@@ -170,6 +174,7 @@ public sealed class WorldSystem : MonoBehaviour
 
     private void OnDestroy()
     {
+        ReleaseTerrainMaterialResources();
         _chunkStore.Dispose();
     }
 
@@ -182,7 +187,8 @@ public sealed class WorldSystem : MonoBehaviour
         {
             Coord = coord,
             Settings = _generationSettings,
-            Density = chunk.Density
+            Density = chunk.Density,
+            MaterialIds = chunk.MaterialIds
         };
 
         JobHandle generationHandle = generationJob.Schedule(WorldConstants.ChunkSampleCount, 128);
@@ -197,6 +203,7 @@ public sealed class WorldSystem : MonoBehaviour
 
     private ChunkView CreateChunkView(ChunkCoord coord, Transform root)
     {
+        EnsureTerrainMaterialConfigured();
         ChunkView view;
 
         if (_chunkViewPrefab != null)
@@ -213,6 +220,36 @@ public sealed class WorldSystem : MonoBehaviour
         view.SetChunkCoord(coord);
         view.SetMaterial(_terrainMaterial);
         return view;
+    }
+
+    private void EnsureTerrainMaterialConfigured()
+    {
+        if (_terrainMaterial == null || _terrainMaterialLibrary == null)
+        {
+            return;
+        }
+
+        if (_terrainMaterialResources == null)
+        {
+            if (!_terrainMaterialLibrary.TryBuildRuntimeResources(out _terrainMaterialResources, out string error))
+            {
+                Debug.LogError($"Failed to build terrain material arrays: {error}", this);
+                return;
+            }
+        }
+
+        _terrainMaterialLibrary.ApplyToMaterial(_terrainMaterial, _terrainMaterialResources);
+    }
+
+    private void ReleaseTerrainMaterialResources()
+    {
+        if (_terrainMaterialResources == null)
+        {
+            return;
+        }
+
+        _terrainMaterialResources.Release();
+        _terrainMaterialResources = null;
     }
 
     private void RebuildDirtySubChunks(ChunkData chunk, ChunkView view, bool applyCollider)
@@ -265,11 +302,13 @@ public sealed class WorldSystem : MonoBehaviour
                 SubChunkMeshWriteJob writeJob = new SubChunkMeshWriteJob
                 {
                     Density = chunk.Density,
+                    MaterialIds = chunk.MaterialIds,
                     TriangleCounts = triangleCounts,
                     TriangleOffsets = triangleOffsets,
                     SubChunkIndex = subChunkIndex,
                     Vertices = meshData.Vertices,
-                    Indices = meshData.Indices
+                    Indices = meshData.Indices,
+                    MaterialInfo = meshData.MaterialInfo
                 };
 
                 JobHandle writeHandle = writeJob.Schedule(WorldConstants.SubChunkCellCount, 128);

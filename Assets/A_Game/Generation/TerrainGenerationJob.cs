@@ -17,10 +17,18 @@ using Unity.Mathematics;
 [BurstCompile]
 public struct TerrainGenerationJob : IJobParallelFor
 {
+    private const byte DirtMaterialId = 1;
+    private const byte RockMaterialId = 2;
+    private const float DirtLayerDepth = 4f;
+
     public ChunkCoord Coord;
     public TerrainGenerationSettings Settings;
 
     public NativeArray<byte> Density;
+
+    [NativeDisableParallelForRestriction]
+    [WriteOnly]
+    public NativeArray<byte> MaterialIds;
 
     public void Execute(int index)
     {
@@ -45,5 +53,17 @@ public struct TerrainGenerationJob : IJobParallelFor
         float clampedDensity = math.clamp(normalizedDensity, 0f, 1f);
 
         Density[index] = (byte)math.round(clampedDensity * WorldConstants.FullDensity);
+
+        if (sampleX >= WorldConstants.ChunkSizeX ||
+            sampleY >= WorldConstants.ChunkSizeY ||
+            sampleZ >= WorldConstants.ChunkSizeZ)
+        {
+            return;
+        }
+
+        float cellCenterY = sampleY + 0.5f;
+        float surfaceDepth = height - cellCenterY;
+        byte materialId = surfaceDepth <= DirtLayerDepth ? DirtMaterialId : RockMaterialId;
+        MaterialIds[WorldMath.CellIndex(sampleX, sampleY, sampleZ)] = materialId;
     }
 }

@@ -9,15 +9,17 @@ public sealed class SubChunkMeshData : IDisposable
 {
     public NativeArray<float3> Vertices;
     public NativeArray<int> Indices;
+    public NativeArray<float2> MaterialInfo;
 
     public SubChunkMeshData(int triangleCount, Allocator allocator)
     {
         int elementCount = triangleCount * 3;
         Vertices = new NativeArray<float3>(elementCount, allocator);
         Indices = new NativeArray<int>(elementCount, allocator);
+        MaterialInfo = new NativeArray<float2>(elementCount, allocator);
     }
 
-    public bool IsCreated => Vertices.IsCreated && Indices.IsCreated;
+    public bool IsCreated => Vertices.IsCreated && Indices.IsCreated && MaterialInfo.IsCreated;
 
     public void Dispose()
     {
@@ -29,6 +31,11 @@ public sealed class SubChunkMeshData : IDisposable
         if (Indices.IsCreated)
         {
             Indices.Dispose();
+        }
+
+        if (MaterialInfo.IsCreated)
+        {
+            MaterialInfo.Dispose();
         }
     }
 }

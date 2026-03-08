@@ -280,7 +280,7 @@ Transform:
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 75, y: 160, z: -90}
+  m_LocalPosition: {x: 130, y: 120, z: 100}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -761,8 +761,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldDebugUI
   _worldSystem: {fileID: 1976003901}
+  _referenceCamera: {fileID: 330585545}
+  _debugRoot: {fileID: 1550550789}
   _targetText: {fileID: 1183690651}
   _refreshInterval: 0.25
+  _chunkBoundsColor: {r: 0.2, g: 0.8, b: 1, a: 0.039215688}
 --- !u!1 &944225250
 GameObject:
   m_ObjectHideFlags: 0
@@ -1291,7 +1294,8 @@ MonoBehaviour:
     SurfaceFade: 8
   _chunkViewPrefab: {fileID: 68376585372058145, guid: 4adc5534646c11c4788b785e65fb5f88, type: 3}
   _chunkRoot: {fileID: 1976003902}
-  _terrainMaterial: {fileID: 2100000, guid: b74fb885bc4028a48b5bcdcffc5400dd, type: 2}
+  _terrainMaterial: {fileID: 2100000, guid: 9936319df9970504e99b5af1ab084fac, type: 2}
+  _terrainMaterialLibrary: {fileID: 11400000, guid: 67d6b29e2bd240c499fe69e462393340, type: 2}
   _applyMeshCollider: 1
 --- !u!4 &1976003902
 Transform:

@@ -14,6 +14,7 @@ using Unity.Mathematics;
 public struct SubChunkMeshWriteJob : IJobParallelFor
 {
     [ReadOnly] public NativeArray<byte> Density;
+    [ReadOnly] public NativeArray<byte> MaterialIds;
     [ReadOnly] public NativeArray<byte> TriangleCounts;
     [ReadOnly] public NativeArray<int> TriangleOffsets;
 
@@ -24,6 +25,9 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
 
     [NativeDisableParallelForRestriction]
     [WriteOnly] public NativeArray<int> Indices;
+
+    [NativeDisableParallelForRestriction]
+    [WriteOnly] public NativeArray<float2> MaterialInfo;
 
     public void Execute(int index)
     {
@@ -74,6 +78,7 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
         int triangleStart = TriangleOffsets[index];
         int localTriangleIndex = 0;
         int rowIndex = cubeIndex * MarchingCubesTables.TriangleTableStride;
+        float2 materialInfo = new float2(ReadMaterial(localX, sampleBaseY, localZ), 0f);
 
         for (int i = 0; i < MarchingCubesTables.TriangleTableStride; i += 3)
         {
@@ -106,6 +111,10 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
             Indices[vertexStart + 1] = vertexStart + 1;
             Indices[vertexStart + 2] = vertexStart + 2;
 
+            MaterialInfo[vertexStart + 0] = materialInfo;
+            MaterialInfo[vertexStart + 1] = materialInfo;
+            MaterialInfo[vertexStart + 2] = materialInfo;
+
             localTriangleIndex++;
         }
     }
@@ -113,6 +122,11 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
     private byte ReadDensity(int sampleX, int sampleY, int sampleZ)
     {
         return Density[WorldMath.SampleIndex(sampleX, sampleY, sampleZ)];
+    }
+
+    private byte ReadMaterial(int cellX, int cellY, int cellZ)
+    {
+        return MaterialIds[WorldMath.CellIndex(cellX, cellY, cellZ)];
     }
 
     private static bool IsValidTriangle(float3 a, float3 b, float3 c)

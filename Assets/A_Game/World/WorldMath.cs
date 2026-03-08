@@ -76,6 +76,15 @@ public static class WorldMath
     }
 
     /// <summary>
+    /// 3차원 cell 좌표를 1차원 NativeArray 인덱스로 변환한다.
+    /// </summary>
+    public static int CellIndex(int cellX, int cellY, int cellZ)
+    {
+        return cellX
+            + WorldConstants.ChunkSizeX * (cellZ + WorldConstants.ChunkSizeZ * cellY);
+    }
+
+    /// <summary>
     /// 서브청크 인덱스로부터 그 서브청크의 시작 셀 Y를 구한다.
     /// </summary>
     public static int SubChunkStartY(int subChunkIndex)
