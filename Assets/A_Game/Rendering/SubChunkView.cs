@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -15,15 +14,9 @@ public sealed class SubChunkView : MonoBehaviour
     [SerializeField] private MeshCollider _meshCollider;
 
     private Mesh _mesh;
-    private readonly List<Vector3> _vertexScratch = new List<Vector3>();
-    private readonly List<int> _indexScratch = new List<int>();
-    private readonly List<Vector2> _uv2Scratch = new List<Vector2>();
 
     public MeshRenderer MeshRenderer => _meshRenderer;
     public MeshCollider MeshCollider => _meshCollider;
-    public List<Vector3> VertexScratch => _vertexScratch;
-    public List<int> IndexScratch => _indexScratch;
-    public List<Vector2> Uv2Scratch => _uv2Scratch;
 
     private void Reset()
     {
@@ -70,17 +63,6 @@ public sealed class SubChunkView : MonoBehaviour
         _meshCollider.sharedMesh = null;
     }
 
-    public void PrepareScratchBuffers(int vertexCount, int indexCount, int uvCount)
-    {
-        EnsureListCapacity(_vertexScratch, vertexCount);
-        EnsureListCapacity(_indexScratch, indexCount);
-        EnsureListCapacity(_uv2Scratch, uvCount);
-
-        _vertexScratch.Clear();
-        _indexScratch.Clear();
-        _uv2Scratch.Clear();
-    }
-
     private void CacheComponents()
     {
         if (_meshFilter == null)
@@ -96,14 +78,6 @@ public sealed class SubChunkView : MonoBehaviour
         if (_meshCollider == null)
         {
             _meshCollider = GetComponent<MeshCollider>();
-        }
-    }
-
-    private static void EnsureListCapacity<T>(List<T> list, int count)
-    {
-        if (list.Capacity < count)
-        {
-            list.Capacity = count;
         }
     }
 }

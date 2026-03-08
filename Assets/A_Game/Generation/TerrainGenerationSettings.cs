@@ -29,6 +29,20 @@ public struct TerrainGenerationSettings
     /// </summary>
     public float HeightAmplitude;
 
+    public int Seed;
+
+    public int Octaves;
+
+    public float Lacunarity;
+
+    public float Persistence;
+
+    public float SeaLevel;
+
+    public float BaseDirtHeight;
+
+    public float BaseRockHeight;
+
     /// <summary>
     /// 표면 근처 density가 얼마나 완만하게 바뀔지를 결정하는 폭이다.
     ///

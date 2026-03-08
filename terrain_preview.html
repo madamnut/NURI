@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terrain Heightmap Preview</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #182028;
+      --panel-2: #202a34;
+      --text: #e7eef5;
+      --muted: #9eb0c2;
+      --accent: #78d6b1;
+      --border: #2d3a47;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(120, 214, 177, 0.08), transparent 30%),
+        linear-gradient(180deg, #121920, #0b1014);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      min-height: 100vh;
+    }
+
+    .panel {
+      padding: 20px;
+      background: rgba(24, 32, 40, 0.96);
+      border-right: 1px solid var(--border);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+
+    .subtitle {
+      margin: 0 0 20px;
+      color: var(--muted);
+      line-height: 1.4;
+      font-size: 14px;
+    }
+
+    .group {
+      padding: 14px;
+      margin-bottom: 14px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .group h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .field {
+      display: grid;
+      grid-template-columns: 1fr 92px;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      font-size: 14px;
+    }
+
+    input, select, button {
+      width: 100%;
+      background: #11171d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+
+    input[type="range"] {
+      padding: 0;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    button {
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+
+    button:hover {
+      background: #162029;
+      border-color: #3f5366;
+    }
+
+    .primary {
+      background: rgba(120, 214, 177, 0.14);
+      border-color: rgba(120, 214, 177, 0.4);
+    }
+
+    .viewer {
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      background: rgba(24, 32, 40, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .stats {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .stat strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .canvas-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 620px;
+      background: rgba(14, 20, 26, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+    }
+
+    .hint {
+      position: absolute;
+      left: 14px;
+      bottom: 14px;
+      padding: 10px 12px;
+      background: rgba(10, 14, 18, 0.84);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      pointer-events: none;
+      white-space: pre-line;
+    }
+
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .canvas-wrap {
+        min-height: 60vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="panel">
+      <h1>Terrain Heightmap Preview</h1>
+      <p class="subtitle">Unity 지형 생성값과 비슷한 파라미터로 큰 형태를 먼저 보는 용도. 플레이 없이 높이 분포와 노이즈 감을 빠르게 확인할 수 있다.</p>
+
+      <section class="group">
+        <h2>Generation</h2>
+        <div class="field">
+          <label for="noiseScale">Noise Scale</label>
+          <input id="noiseScale" type="number" step="0.001" value="0.02">
+        </div>
+        <div class="field">
+          <label for="baseHeight">Base Height</label>
+          <input id="baseHeight" type="number" step="1" value="48">
+        </div>
+        <div class="field">
+          <label for="heightAmplitude">Height Amplitude</label>
+          <input id="heightAmplitude" type="number" step="1" value="64">
+        </div>
+        <div class="field">
+          <label for="surfaceFade">Surface Fade</label>
+          <input id="surfaceFade" type="number" step="0.5" value="8">
+        </div>
+        <div class="field">
+          <label for="octaves">Octaves</label>
+          <input id="octaves" type="number" step="1" min="1" max="8" value="4">
+        </div>
+        <div class="field">
+          <label for="lacunarity">Lacunarity</label>
+          <input id="lacunarity" type="number" step="0.1" min="1" value="2">
+        </div>
+        <div class="field">
+          <label for="persistence">Persistence</label>
+          <input id="persistence" type="number" step="0.05" min="0.05" max="1" value="0.5">
+        </div>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input id="seed" type="number" step="1" value="0">
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>View</h2>
+        <div class="field">
+          <label for="worldSpan">World Span</label>
+          <input id="worldSpan" type="number" step="128" value="2048">
+        </div>
+        <div class="field">
+          <label for="resolution">Resolution</label>
+          <select id="resolution">
+            <option value="256">256</option>
+            <option value="384">384</option>
+            <option value="512" selected>512</option>
+            <option value="768">768</option>
+            <option value="1024">1024</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="offsetX">Offset X</label>
+          <input id="offsetX" type="number" step="128" value="0">
+        </div>
+        <div class="field">
+          <label for="offsetZ">Offset Z</label>
+          <input id="offsetZ" type="number" step="128" value="0">
+        </div>
+        <div class="field">
+          <label for="palette">Palette</label>
+          <select id="palette">
+            <option value="terrain" selected>Terrain</option>
+            <option value="grayscale">Grayscale</option>
+            <option value="heat">Heat</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>Actions</h2>
+        <div class="actions">
+          <button id="renderButton" class="primary">Render</button>
+          <button id="randomizeSeed">Random Seed</button>
+        </div>
+      </section>
+    </aside>
+
+    <main class="viewer">
+      <div class="toolbar">
+        <div class="stats">
+          <div class="stat"><strong id="minHeight">-</strong><span> min</span></div>
+          <div class="stat"><strong id="maxHeight">-</strong><span> max</span></div>
+          <div class="stat"><strong id="avgHeight">-</strong><span> avg</span></div>
+          <div class="stat"><strong id="renderTime">-</strong><span> render ms</span></div>
+        </div>
+        <div class="stat">현재 기본값은 Unity `WorldSystem` 생성 설정과 맞춤</div>
+      </div>
+
+      <div class="canvas-wrap">
+        <canvas id="previewCanvas" width="512" height="512"></canvas>
+        <div id="hoverInfo" class="hint">hover to inspect</div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("previewCanvas");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const hoverInfo = document.getElementById("hoverInfo");
+
+    const fields = {
+      noiseScale: document.getElementById("noiseScale"),
+      baseHeight: document.getElementById("baseHeight"),
+      heightAmplitude: document.getElementById("heightAmplitude"),
+      surfaceFade: document.getElementById("surfaceFade"),
+      octaves: document.getElementById("octaves"),
+      lacunarity: document.getElementById("lacunarity"),
+      persistence: document.getElementById("persistence"),
+      seed: document.getElementById("seed"),
+      worldSpan: document.getElementById("worldSpan"),
+      resolution: document.getElementById("resolution"),
+      offsetX: document.getElementById("offsetX"),
+      offsetZ: document.getElementById("offsetZ"),
+      palette: document.getElementById("palette")
+    };
+
+    const stats = {
+      minHeight: document.getElementById("minHeight"),
+      maxHeight: document.getElementById("maxHeight"),
+      avgHeight: document.getElementById("avgHeight"),
+      renderTime: document.getElementById("renderTime")
+    };
+
+    const state = {
+      imageData: null,
+      heights: null,
+      resolution: 512,
+      worldSpan: 2048,
+      offsetX: 0,
+      offsetZ: 0,
+      settings: null
+    };
+
+    class Perlin2D {
+      constructor(seed) {
+        this.perm = new Uint8Array(512);
+        const p = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) {
+          p[i] = i;
+        }
+
+        let s = (seed | 0) >>> 0;
+        const rand = () => {
+          s = (s * 1664525 + 1013904223) >>> 0;
+          return s / 0xffffffff;
+        };
+
+        for (let i = 255; i > 0; i--) {
+          const j = Math.floor(rand() * (i + 1));
+          const tmp = p[i];
+          p[i] = p[j];
+          p[j] = tmp;
+        }
+
+        for (let i = 0; i < 512; i++) {
+          this.perm[i] = p[i & 255];
+        }
+      }
+
+      fade(t) {
+        return t * t * t * (t * (t * 6 - 15) + 10);
+      }
+
+      lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      grad(hash, x, y) {
+        switch (hash & 7) {
+          case 0: return x + y;
+          case 1: return -x + y;
+          case 2: return x - y;
+          case 3: return -x - y;
+          case 4: return x;
+          case 5: return -x;
+          case 6: return y;
+          default: return -y;
+        }
+      }
+
+      noise(x, y) {
+        const xi = Math.floor(x) & 255;
+        const yi = Math.floor(y) & 255;
+        const xf = x - Math.floor(x);
+        const yf = y - Math.floor(y);
+
+        const aa = this.perm[this.perm[xi] + yi];
+        const ab = this.perm[this.perm[xi] + yi + 1];
+        const ba = this.perm[this.perm[xi + 1] + yi];
+        const bb = this.perm[this.perm[xi + 1] + yi + 1];
+
+        const u = this.fade(xf);
+        const v = this.fade(yf);
+
+        const x1 = this.lerp(this.grad(aa, xf, yf), this.grad(ba, xf - 1, yf), u);
+        const x2 = this.lerp(this.grad(ab, xf, yf - 1), this.grad(bb, xf - 1, yf - 1), u);
+        return this.lerp(x1, x2, v);
+      }
+    }
+
+    function getSettings() {
+      return {
+        noiseScale: Number(fields.noiseScale.value),
+        baseHeight: Number(fields.baseHeight.value),
+        heightAmplitude: Number(fields.heightAmplitude.value),
+        surfaceFade: Number(fields.surfaceFade.value),
+        octaves: Number(fields.octaves.value),
+        lacunarity: Number(fields.lacunarity.value),
+        persistence: Number(fields.persistence.value),
+        seed: Number(fields.seed.value),
+        worldSpan: Number(fields.worldSpan.value),
+        resolution: Number(fields.resolution.value),
+        offsetX: Number(fields.offsetX.value),
+        offsetZ: Number(fields.offsetZ.value),
+        palette: fields.palette.value
+      };
+    }
+
+    function sampleHeight(noise, settings, worldX, worldZ) {
+      let amplitude = 1;
+      let frequency = 1;
+      let total = 0;
+      let amplitudeSum = 0;
+      const octaves = Math.max(1, Math.floor(settings.octaves));
+      const lacunarity = Math.max(1, settings.lacunarity);
+      const persistence = Math.max(0.0001, settings.persistence);
+
+      for (let i = 0; i < octaves; i++) {
+        total += noise.noise(
+          worldX * settings.noiseScale * frequency,
+          worldZ * settings.noiseScale * frequency
+        ) * amplitude;
+        amplitudeSum += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+      }
+
+      const normalized = amplitudeSum > 0 ? (total / amplitudeSum) * 0.5 + 0.5 : 0.5;
+      return settings.baseHeight + normalized * settings.heightAmplitude;
+    }
+
+    function colorTerrain(normalizedHeight, localSlope, palette) {
+      if (palette === "grayscale") {
+        const g = Math.floor(normalizedHeight * 255);
+        return [g, g, g];
+      }
+
+      if (palette === "heat") {
+        const r = Math.floor(255 * Math.min(1, normalizedHeight * 1.3));
+        const g = Math.floor(255 * Math.sin(normalizedHeight * Math.PI));
+        const b = Math.floor(255 * (1 - normalizedHeight));
+        return [r, Math.max(0, g), Math.max(0, b)];
+      }
+
+      let r, g, b;
+      if (normalizedHeight < 0.28) {
+        r = 18; g = 46 + normalizedHeight * 40; b = 82 + normalizedHeight * 90;
+      } else if (normalizedHeight < 0.42) {
+        r = 44; g = 90; b = 52;
+      } else if (normalizedHeight < 0.68) {
+        r = 78; g = 118; b = 64;
+      } else if (normalizedHeight < 0.84) {
+        r = 118; g = 108; b = 85;
+      } else {
+        r = 214; g = 220; b = 228;
+      }
+
+      const shade = 1 - Math.min(localSlope * 0.55, 0.35);
+      return [
+        Math.max(0, Math.min(255, Math.floor(r * shade))),
+        Math.max(0, Math.min(255, Math.floor(g * shade))),
+        Math.max(0, Math.min(255, Math.floor(b * shade)))
+      ];
+    }
+
+    function render() {
+      const settings = getSettings();
+      const resolution = settings.resolution;
+      const worldSpan = settings.worldSpan;
+      const start = performance.now();
+
+      state.resolution = resolution;
+      state.worldSpan = worldSpan;
+      state.offsetX = settings.offsetX;
+      state.offsetZ = settings.offsetZ;
+      state.settings = settings;
+
+      canvas.width = resolution;
+      canvas.height = resolution;
+
+      const imageData = ctx.createImageData(resolution, resolution);
+      const heights = new Float32Array(resolution * resolution);
+      const noise = new Perlin2D(settings.seed);
+
+      let minHeight = Number.POSITIVE_INFINITY;
+      let maxHeight = Number.NEGATIVE_INFINITY;
+      let sumHeight = 0;
+
+      for (let z = 0; z < resolution; z++) {
+        for (let x = 0; x < resolution; x++) {
+          const nx = resolution > 1 ? x / (resolution - 1) : 0;
+          const nz = resolution > 1 ? z / (resolution - 1) : 0;
+          const worldX = settings.offsetX + (nx - 0.5) * worldSpan;
+          const worldZ = settings.offsetZ + (nz - 0.5) * worldSpan;
+          const height = sampleHeight(noise, settings, worldX, worldZ);
+          const index = z * resolution + x;
+          heights[index] = height;
+          minHeight = Math.min(minHeight, height);
+          maxHeight = Math.max(maxHeight, height);
+          sumHeight += height;
+        }
+      }
+
+      const heightRange = Math.max(0.0001, maxHeight - minHeight);
+      for (let z = 0; z < resolution; z++) {
+        for (let x = 0; x < resolution; x++) {
+          const index = z * resolution + x;
+          const height = heights[index];
+          const normalizedHeight = (height - minHeight) / heightRange;
+
+          const left = heights[z * resolution + Math.max(0, x - 1)];
+          const right = heights[z * resolution + Math.min(resolution - 1, x + 1)];
+          const up = heights[Math.max(0, z - 1) * resolution + x];
+          const down = heights[Math.min(resolution - 1, z + 1) * resolution + x];
+          const slope = (Math.abs(right - left) + Math.abs(down - up)) / Math.max(1, settings.surfaceFade * 4);
+
+          const [r, g, b] = colorTerrain(normalizedHeight, slope, settings.palette);
+          const pixel = index * 4;
+          imageData.data[pixel + 0] = r;
+          imageData.data[pixel + 1] = g;
+          imageData.data[pixel + 2] = b;
+          imageData.data[pixel + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      state.imageData = imageData;
+      state.heights = heights;
+
+      stats.minHeight.textContent = minHeight.toFixed(2);
+      stats.maxHeight.textContent = maxHeight.toFixed(2);
+      stats.avgHeight.textContent = (sumHeight / heights.length).toFixed(2);
+      stats.renderTime.textContent = (performance.now() - start).toFixed(1);
+    }
+
+    function updateHover(event) {
+      if (!state.heights) {
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const px = Math.max(0, Math.min(state.resolution - 1, Math.floor((event.clientX - rect.left) / rect.width * state.resolution)));
+      const pz = Math.max(0, Math.min(state.resolution - 1, Math.floor((event.clientY - rect.top) / rect.height * state.resolution)));
+      const index = pz * state.resolution + px;
+      const nx = state.resolution > 1 ? px / (state.resolution - 1) : 0;
+      const nz = state.resolution > 1 ? pz / (state.resolution - 1) : 0;
+      const worldX = state.offsetX + (nx - 0.5) * state.worldSpan;
+      const worldZ = state.offsetZ + (nz - 0.5) * state.worldSpan;
+      const chunkX = Math.floor(worldX / 16);
+      const chunkZ = Math.floor(worldZ / 16);
+      const height = state.heights[index];
+
+      hoverInfo.textContent =
+        `world: (${worldX.toFixed(1)}, ${worldZ.toFixed(1)})\n` +
+        `chunk: (${chunkX}, ${chunkZ})\n` +
+        `height: ${height.toFixed(2)}`;
+    }
+
+    document.getElementById("renderButton").addEventListener("click", render);
+    document.getElementById("randomizeSeed").addEventListener("click", () => {
+      fields.seed.value = String(Math.floor(Math.random() * 100000));
+      render();
+    });
+
+    canvas.addEventListener("mousemove", updateHover);
+    canvas.addEventListener("mouseleave", () => {
+      hoverInfo.textContent = "hover to inspect";
+    });
+
+    render();
+  </script>
+</body>
+</html>

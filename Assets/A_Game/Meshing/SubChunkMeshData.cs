@@ -8,6 +8,7 @@ using Unity.Mathematics;
 public sealed class SubChunkMeshData : IDisposable
 {
     public NativeArray<float3> Vertices;
+    public NativeArray<float3> Normals;
     public NativeArray<int> Indices;
     public NativeArray<float2> MaterialInfo;
 
@@ -15,17 +16,23 @@ public sealed class SubChunkMeshData : IDisposable
     {
         int elementCount = triangleCount * 3;
         Vertices = new NativeArray<float3>(elementCount, allocator);
+        Normals = new NativeArray<float3>(elementCount, allocator);
         Indices = new NativeArray<int>(elementCount, allocator);
         MaterialInfo = new NativeArray<float2>(elementCount, allocator);
     }
 
-    public bool IsCreated => Vertices.IsCreated && Indices.IsCreated && MaterialInfo.IsCreated;
+    public bool IsCreated => Vertices.IsCreated && Normals.IsCreated && Indices.IsCreated && MaterialInfo.IsCreated;
 
     public void Dispose()
     {
         if (Vertices.IsCreated)
         {
             Vertices.Dispose();
+        }
+
+        if (Normals.IsCreated)
+        {
+            Normals.Dispose();
         }
 
         if (Indices.IsCreated)

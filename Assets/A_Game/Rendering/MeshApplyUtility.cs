@@ -1,12 +1,21 @@
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// Job에서 생성한 메쉬 데이터를 Unity Mesh 객체에 반영하는 유틸리티이다.
 /// </summary>
 public static class MeshApplyUtility
 {
+    private static readonly VertexAttributeDescriptor[] VertexLayout =
+    {
+        new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, 0),
+        new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, 1),
+        new VertexAttributeDescriptor(VertexAttribute.TexCoord1, VertexAttributeFormat.Float32, 2, 2)
+    };
+
     public static void ApplyToSubChunk(SubChunkView view, SubChunkMeshData meshData, bool applyCollider)
     {
         Mesh mesh = view.EnsureMeshCreated();
@@ -17,49 +26,24 @@ public static class MeshApplyUtility
             return;
         }
 
-        view.PrepareScratchBuffers(meshData.Vertices.Length, meshData.Indices.Length, meshData.MaterialInfo.Length);
-        CopyVertices(meshData.Vertices, view.VertexScratch);
-        CopyIndices(meshData.Indices, view.IndexScratch);
-        CopyMaterialInfo(meshData.MaterialInfo, view.Uv2Scratch);
-
         mesh.Clear();
-        mesh.SetVertices(view.VertexScratch);
-        mesh.SetTriangles(view.IndexScratch, 0, false);
-        mesh.SetUVs(1, view.Uv2Scratch);
-        mesh.RecalculateNormals();
+        mesh.SetVertexBufferParams(meshData.Vertices.Length, VertexLayout);
+        mesh.SetVertexBufferData(meshData.Vertices.Reinterpret<Vector3>(UnsafeUtility.SizeOf<float3>()), 0, 0, meshData.Vertices.Length, 0, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetVertexBufferData(meshData.Normals.Reinterpret<Vector3>(UnsafeUtility.SizeOf<float3>()), 0, 0, meshData.Normals.Length, 1, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetVertexBufferData(meshData.MaterialInfo.Reinterpret<Vector2>(UnsafeUtility.SizeOf<float2>()), 0, 0, meshData.MaterialInfo.Length, 2, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.SetIndexBufferParams(meshData.Indices.Length, IndexFormat.UInt32);
+        mesh.SetIndexBufferData(meshData.Indices, 0, 0, meshData.Indices.Length, MeshUpdateFlags.DontRecalculateBounds);
+        mesh.subMeshCount = 1;
+        mesh.SetSubMesh(0, new SubMeshDescriptor(0, meshData.Indices.Length, MeshTopology.Triangles), MeshUpdateFlags.DontRecalculateBounds);
         mesh.RecalculateBounds();
+
+        view.MeshCollider.sharedMesh = null;
 
         if (!applyCollider)
         {
             return;
         }
 
-        view.MeshCollider.sharedMesh = null;
         view.MeshCollider.sharedMesh = mesh;
-    }
-
-    private static void CopyVertices(NativeArray<float3> source, System.Collections.Generic.List<Vector3> destination)
-    {
-        for (int i = 0; i < source.Length; i++)
-        {
-            destination.Add(source[i]);
-        }
-    }
-
-    private static void CopyIndices(NativeArray<int> source, System.Collections.Generic.List<int> destination)
-    {
-        for (int i = 0; i < source.Length; i++)
-        {
-            destination.Add(source[i]);
-        }
-    }
-
-    private static void CopyMaterialInfo(NativeArray<float2> source, System.Collections.Generic.List<Vector2> destination)
-    {
-        for (int i = 0; i < source.Length; i++)
-        {
-            float2 value = source[i];
-            destination.Add(new Vector2(value.x, value.y));
-        }
     }
 }

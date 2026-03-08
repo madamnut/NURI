@@ -9,12 +9,23 @@ using UnityEngine;
 /// </summary>
 public sealed class WorldSystem : MonoBehaviour
 {
+    private const int LOD0 = 0;
+    private const int LOD1 = 1;
+    private const int LOD2 = 2;
+
     [Header("Generation")]
     [SerializeField] private TerrainGenerationSettings _generationSettings = new TerrainGenerationSettings
     {
         NoiseScale = 0.02f,
         BaseHeight = 48f,
         HeightAmplitude = 64f,
+        Seed = 0,
+        Octaves = 4,
+        Lacunarity = 2f,
+        Persistence = 0.5f,
+        SeaLevel = 63f,
+        BaseDirtHeight = 70f,
+        BaseRockHeight = 65f,
         SurfaceFade = 8f
     };
 
@@ -30,6 +41,7 @@ public sealed class WorldSystem : MonoBehaviour
     [SerializeField] private Material _terrainMaterial;
     [SerializeField] private TerrainMaterialLibrary _terrainMaterialLibrary;
     [SerializeField] private bool _applyMeshCollider = true;
+    [SerializeField, Min(0)] private int _maxChunkViewPoolCount = 256;
 
     private sealed class PendingChunkGeneration
     {
@@ -40,6 +52,7 @@ public sealed class WorldSystem : MonoBehaviour
     private sealed class PendingSubChunkBuild : IDisposable
     {
         public int SubChunkIndex;
+        public int CellCount;
         public bool WriteScheduled;
         public bool ReadyToApply;
         public SubChunkView View;
@@ -71,8 +84,10 @@ public sealed class WorldSystem : MonoBehaviour
     private sealed class PendingChunkMeshBuild : IDisposable
     {
         public ChunkCoord Coord;
+        public int TargetLod;
         public ChunkView View;
         public bool ApplyCollider;
+        public bool HideUntilReady;
         public PendingSubChunkBuild[] SubChunkBuilds;
 
         public void Dispose()
@@ -91,8 +106,10 @@ public sealed class WorldSystem : MonoBehaviour
 
     private readonly ChunkDataStore _chunkStore = new ChunkDataStore();
     private readonly Dictionary<ChunkCoord, ChunkView> _chunkViews = new Dictionary<ChunkCoord, ChunkView>();
+    private readonly Dictionary<ChunkCoord, int> _activeChunkLods = new Dictionary<ChunkCoord, int>();
     private readonly HashSet<ChunkCoord> _modifiedChunks = new HashSet<ChunkCoord>();
     private readonly HashSet<ChunkCoord> _desiredChunkCoords = new HashSet<ChunkCoord>();
+    private readonly Dictionary<ChunkCoord, int> _desiredChunkLods = new Dictionary<ChunkCoord, int>();
     private readonly Queue<ChunkCoord> _pendingChunkLoads = new Queue<ChunkCoord>();
     private readonly Queue<ChunkCoord> _pendingChunkUnloads = new Queue<ChunkCoord>();
     private readonly HashSet<ChunkCoord> _pendingLoadSet = new HashSet<ChunkCoord>();
@@ -110,6 +127,7 @@ public sealed class WorldSystem : MonoBehaviour
     private bool _hasStreamingCenter;
     private ChunkCoord _streamingCenter;
 
+    public int ActiveChunkCount => _chunkViews.Count;
     public int LoadedChunkCount => _chunkStore.Count;
     public int PendingChunkLoadCount => _pendingChunkLoads.Count;
     public int PendingGenerationCount => _pendingGenerations.Count;
@@ -118,7 +136,9 @@ public sealed class WorldSystem : MonoBehaviour
     public int PooledChunkViewCount => _chunkViewPool.Count;
     public bool HasGeneratedWorld { get; private set; }
     public TerrainMaterialLibrary TerrainMaterialLibrary => _terrainMaterialLibrary;
-    private int MaxChunkViewPoolCount => ChunkCountForRadius(Mathf.Max(0, _loadRadius) + 2);
+    public int GenerationSeed => _generationSettings.Seed;
+    public int LoadRadius => Mathf.Max(0, _loadRadius);
+    private int MaxChunkViewPoolCount => Mathf.Max(0, _maxChunkViewPoolCount);
 
     [ContextMenu("Generate Initial World")]
     public void GenerateInitialWorld()
@@ -160,8 +180,10 @@ public sealed class WorldSystem : MonoBehaviour
         }
 
         _chunkViews.Clear();
+        _activeChunkLods.Clear();
         _chunkStore.ClearAndDispose();
         _desiredChunkCoords.Clear();
+        _desiredChunkLods.Clear();
         _pendingChunkLoads.Clear();
         _pendingChunkUnloads.Clear();
         _pendingLoadSet.Clear();
@@ -206,6 +228,12 @@ public sealed class WorldSystem : MonoBehaviour
 
         materialId = chunk.GetMaterialId(localCell.x, localCell.y, localCell.z);
         return true;
+    }
+
+    public bool TryGetStreamingCenter(out ChunkCoord center)
+    {
+        center = _streamingCenter;
+        return _hasStreamingCenter;
     }
 
     [ContextMenu("Rebuild All Loaded Chunks")]
@@ -326,20 +354,39 @@ public sealed class WorldSystem : MonoBehaviour
     private void RefreshDesiredChunkSet(ChunkCoord center)
     {
         _desiredChunkCoords.Clear();
+        _desiredChunkLods.Clear();
         int loadRadius = Mathf.Max(0, _loadRadius);
+        int maxRadius = loadRadius * 3;
 
-        for (int dz = -loadRadius; dz <= loadRadius; dz++)
+        for (int dz = -maxRadius; dz <= maxRadius; dz++)
         {
-            for (int dx = -loadRadius; dx <= loadRadius; dx++)
+            for (int dx = -maxRadius; dx <= maxRadius; dx++)
             {
-                _desiredChunkCoords.Add(new ChunkCoord(center.X + dx, center.Z + dz));
+                int distance = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz));
+                int desiredLod = ResolveDesiredLod(distance, loadRadius);
+                if (desiredLod < 0)
+                {
+                    continue;
+                }
+
+                ChunkCoord coord = new ChunkCoord(center.X + dx, center.Z + dz);
+                _desiredChunkCoords.Add(coord);
+                _desiredChunkLods[coord] = desiredLod;
             }
         }
 
         _loadBuffer.Clear();
-        foreach (ChunkCoord coord in _desiredChunkCoords)
+        foreach (KeyValuePair<ChunkCoord, int> pair in _desiredChunkLods)
         {
-            if (_chunkStore.Contains(coord))
+            ChunkCoord coord = pair.Key;
+            int desiredLod = pair.Value;
+
+            if (_activeChunkLods.TryGetValue(coord, out int currentLod) && currentLod == desiredLod)
+            {
+                continue;
+            }
+
+            if (HasPendingJobsForChunk(coord))
             {
                 continue;
             }
@@ -371,7 +418,7 @@ public sealed class WorldSystem : MonoBehaviour
         }
 
         _coordBuffer.Clear();
-        foreach (KeyValuePair<ChunkCoord, ChunkData> pair in _chunkStore.Enumerate())
+        foreach (KeyValuePair<ChunkCoord, ChunkView> pair in _chunkViews)
         {
             _coordBuffer.Add(pair.Key);
         }
@@ -464,12 +511,12 @@ public sealed class WorldSystem : MonoBehaviour
             ChunkCoord coord = _pendingChunkLoads.Dequeue();
             _pendingLoadSet.Remove(coord);
 
-            if (!_desiredChunkCoords.Contains(coord) || _chunkStore.Contains(coord))
+            if (!_desiredChunkLods.TryGetValue(coord, out int desiredLod))
             {
                 continue;
             }
 
-            GenerateChunk(coord);
+            EnsureChunkAtDesiredLod(coord, desiredLod);
             loaded++;
         }
     }
@@ -494,6 +541,54 @@ public sealed class WorldSystem : MonoBehaviour
         };
 
         _pendingGenerations.Add(coord, operation);
+    }
+
+    private void EnsureChunkAtDesiredLod(ChunkCoord coord, int desiredLod)
+    {
+        if (_pendingGenerations.ContainsKey(coord) || _pendingChunkMeshBuilds.ContainsKey(coord))
+        {
+            return;
+        }
+
+        _activeChunkLods.TryGetValue(coord, out int currentLod);
+
+        if (_chunkViews.TryGetValue(coord, out ChunkView existingView) && currentLod == desiredLod)
+        {
+            return;
+        }
+
+        if (desiredLod == LOD0)
+        {
+            if (!_chunkStore.Contains(coord))
+            {
+                GenerateChunk(coord);
+                return;
+            }
+
+            if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+            {
+                return;
+            }
+
+            Transform root = _chunkRoot != null ? _chunkRoot : transform;
+            ChunkView view = _chunkViews.TryGetValue(coord, out ChunkView currentView)
+                ? currentView
+                : AcquireChunkView(coord, root);
+
+            _chunkViews[coord] = view;
+            ScheduleChunkLoadBuild(chunk, view, _applyMeshCollider);
+            return;
+        }
+
+        Transform chunkRoot = _chunkRoot != null ? _chunkRoot : transform;
+        bool hasExistingView = _chunkViews.TryGetValue(coord, out ChunkView lodView);
+        if (!hasExistingView)
+        {
+            lodView = AcquireChunkView(coord, chunkRoot);
+            _chunkViews[coord] = lodView;
+        }
+
+        ScheduleLodChunkBuild(coord, lodView, desiredLod, false, !hasExistingView);
     }
 
     private void ProcessCompletedGenerationJobs()
@@ -524,14 +619,28 @@ public sealed class WorldSystem : MonoBehaviour
                 continue;
             }
 
-            if (!_desiredChunkCoords.Contains(coord))
+            if (!_desiredChunkLods.TryGetValue(coord, out int desiredLod))
             {
                 _chunkStore.RemoveAndDispose(coord);
                 continue;
             }
 
+            if (desiredLod != LOD0)
+            {
+                if (_activeChunkLods.TryGetValue(coord, out int currentLod) && currentLod == desiredLod)
+                {
+                    _chunkStore.RemoveAndDispose(coord);
+                    continue;
+                }
+
+                EnsureChunkAtDesiredLod(coord, desiredLod);
+                continue;
+            }
+
             Transform root = _chunkRoot != null ? _chunkRoot : transform;
-            ChunkView view = AcquireChunkView(coord, root);
+            ChunkView view = _chunkViews.TryGetValue(coord, out ChunkView currentView)
+                ? currentView
+                : AcquireChunkView(coord, root);
             _chunkViews[coord] = view;
             ScheduleChunkLoadBuild(chunk, view, _applyMeshCollider);
         }
@@ -565,6 +674,7 @@ public sealed class WorldSystem : MonoBehaviour
     private void UnloadChunk(ChunkCoord coord)
     {
         _chunkStore.RemoveAndDispose(coord);
+        _activeChunkLods.Remove(coord);
 
         if (_chunkViews.TryGetValue(coord, out ChunkView view))
         {
@@ -653,16 +763,23 @@ public sealed class WorldSystem : MonoBehaviour
     private void ScheduleChunkLoadBuild(ChunkData chunk, ChunkView view, bool applyCollider)
     {
         chunk.MarkAllSubChunksDirty();
-        view.ClearAllSubChunks();
-        view.gameObject.SetActive(false);
+        bool hideUntilReady = !_activeChunkLods.ContainsKey(chunk.Coord);
 
         PendingChunkMeshBuild build = new PendingChunkMeshBuild
         {
             Coord = chunk.Coord,
+            TargetLod = LOD0,
             View = view,
             ApplyCollider = applyCollider,
+            HideUntilReady = hideUntilReady,
             SubChunkBuilds = new PendingSubChunkBuild[WorldConstants.SubChunkCount]
         };
+
+        if (build.HideUntilReady)
+        {
+            view.ClearAllSubChunks();
+            view.gameObject.SetActive(false);
+        }
 
         for (int subChunkIndex = 0; subChunkIndex < WorldConstants.SubChunkCount; subChunkIndex++)
         {
@@ -675,6 +792,7 @@ public sealed class WorldSystem : MonoBehaviour
             PendingSubChunkBuild operation = new PendingSubChunkBuild
             {
                 SubChunkIndex = subChunkIndex,
+                CellCount = WorldConstants.SubChunkCellCount,
                 View = subChunkView,
                 TriangleCounts = new NativeArray<byte>(WorldConstants.SubChunkCellCount, Allocator.Persistent),
                 TriangleOffsets = new NativeArray<int>(WorldConstants.SubChunkCellCount, Allocator.Persistent)
@@ -694,9 +812,70 @@ public sealed class WorldSystem : MonoBehaviour
         _pendingChunkMeshBuilds[chunk.Coord] = build;
     }
 
+    private void ScheduleLodChunkBuild(ChunkCoord coord, ChunkView view, int lodLevel, bool applyCollider, bool hideUntilReady)
+    {
+        int horizontalStep = GetHorizontalStepForLod(lodLevel);
+        int cellsX = WorldConstants.ChunkSizeX / horizontalStep;
+        int cellsZ = WorldConstants.ChunkSizeZ / horizontalStep;
+        int subChunkCellCount = cellsX * WorldConstants.SubChunkSize * cellsZ;
+
+        PendingChunkMeshBuild build = new PendingChunkMeshBuild
+        {
+            Coord = coord,
+            TargetLod = lodLevel,
+            View = view,
+            ApplyCollider = applyCollider,
+            HideUntilReady = hideUntilReady,
+            SubChunkBuilds = new PendingSubChunkBuild[WorldConstants.SubChunkCount]
+        };
+
+        if (hideUntilReady)
+        {
+            view.ClearAllSubChunks();
+            view.gameObject.SetActive(false);
+        }
+
+        for (int subChunkIndex = 0; subChunkIndex < WorldConstants.SubChunkCount; subChunkIndex++)
+        {
+            SubChunkView subChunkView = view.GetSubChunk(subChunkIndex);
+            if (subChunkView == null)
+            {
+                continue;
+            }
+
+            PendingSubChunkBuild operation = new PendingSubChunkBuild
+            {
+                SubChunkIndex = subChunkIndex,
+                CellCount = subChunkCellCount,
+                View = subChunkView,
+                TriangleCounts = new NativeArray<byte>(subChunkCellCount, Allocator.Persistent),
+                TriangleOffsets = new NativeArray<int>(subChunkCellCount, Allocator.Persistent)
+            };
+
+            LodSubChunkTriangleCountJob countJob = new LodSubChunkTriangleCountJob
+            {
+                Coord = coord,
+                Settings = _generationSettings,
+                SubChunkIndex = subChunkIndex,
+                HorizontalStep = horizontalStep,
+                CellsX = cellsX,
+                CellsZ = cellsZ,
+                TriangleCounts = operation.TriangleCounts
+            };
+
+            operation.Handle = countJob.Schedule(subChunkCellCount, 128);
+            build.SubChunkBuilds[subChunkIndex] = operation;
+        }
+
+        _pendingChunkMeshBuilds[coord] = build;
+    }
+
     private bool TryAdvanceChunkMeshBuild(PendingChunkMeshBuild build)
     {
         bool allReady = true;
+        int horizontalStep = GetHorizontalStepForLod(build.TargetLod);
+        int cellsX = WorldConstants.ChunkSizeX / horizontalStep;
+        int cellsZ = WorldConstants.ChunkSizeZ / horizontalStep;
 
         for (int i = 0; i < build.SubChunkBuilds.Length; i++)
         {
@@ -725,25 +904,53 @@ public sealed class WorldSystem : MonoBehaviour
 
                 if (!_chunkStore.TryGet(build.Coord, out ChunkData chunk))
                 {
-                    operation.ReadyToApply = true;
-                    continue;
+                    if (build.TargetLod == LOD0)
+                    {
+                        operation.ReadyToApply = true;
+                        continue;
+                    }
                 }
 
                 operation.MeshData = new SubChunkMeshData(totalTriangles, Allocator.Persistent);
 
-                SubChunkMeshWriteJob writeJob = new SubChunkMeshWriteJob
+                if (build.TargetLod == LOD0)
                 {
-                    Density = chunk.Density,
-                    MaterialIds = chunk.MaterialIds,
-                    TriangleCounts = operation.TriangleCounts,
-                    TriangleOffsets = operation.TriangleOffsets,
-                    SubChunkIndex = operation.SubChunkIndex,
-                    Vertices = operation.MeshData.Vertices,
-                    Indices = operation.MeshData.Indices,
-                    MaterialInfo = operation.MeshData.MaterialInfo
-                };
+                    SubChunkMeshWriteJob writeJob = new SubChunkMeshWriteJob
+                    {
+                        Density = chunk.Density,
+                        MaterialIds = chunk.MaterialIds,
+                        TriangleCounts = operation.TriangleCounts,
+                        TriangleOffsets = operation.TriangleOffsets,
+                        SubChunkIndex = operation.SubChunkIndex,
+                        Vertices = operation.MeshData.Vertices,
+                        Normals = operation.MeshData.Normals,
+                        Indices = operation.MeshData.Indices,
+                        MaterialInfo = operation.MeshData.MaterialInfo
+                    };
 
-                operation.Handle = writeJob.Schedule(WorldConstants.SubChunkCellCount, 128);
+                    operation.Handle = writeJob.Schedule(operation.CellCount, 128);
+                }
+                else
+                {
+                    LodSubChunkMeshWriteJob writeJob = new LodSubChunkMeshWriteJob
+                    {
+                        Coord = build.Coord,
+                        Settings = _generationSettings,
+                        SubChunkIndex = operation.SubChunkIndex,
+                        HorizontalStep = horizontalStep,
+                        CellsX = cellsX,
+                        CellsZ = cellsZ,
+                        TriangleCounts = operation.TriangleCounts,
+                        TriangleOffsets = operation.TriangleOffsets,
+                        Vertices = operation.MeshData.Vertices,
+                        Normals = operation.MeshData.Normals,
+                        Indices = operation.MeshData.Indices,
+                        MaterialInfo = operation.MeshData.MaterialInfo
+                    };
+
+                    operation.Handle = writeJob.Schedule(operation.CellCount, 128);
+                }
+
                 operation.WriteScheduled = true;
                 allReady = false;
                 continue;
@@ -759,22 +966,36 @@ public sealed class WorldSystem : MonoBehaviour
     {
         try
         {
-            bool isDesired = _desiredChunkCoords.Contains(build.Coord);
+            bool isDesired = _desiredChunkLods.TryGetValue(build.Coord, out int desiredLod);
             bool hasChunk = _chunkStore.TryGet(build.Coord, out ChunkData chunk);
             bool hasView = _chunkViews.TryGetValue(build.Coord, out ChunkView currentView);
-            bool shouldApply = isDesired && hasChunk && hasView && currentView == build.View;
+            bool shouldApply =
+                isDesired &&
+                desiredLod == build.TargetLod &&
+                hasView &&
+                currentView == build.View &&
+                (build.TargetLod != LOD0 || hasChunk);
 
             if (!shouldApply)
             {
                 if (hasView && currentView == build.View)
                 {
-                    _chunkViews.Remove(build.Coord);
-                    ReleaseChunkView(currentView);
+                    if (!isDesired)
+                    {
+                        _chunkViews.Remove(build.Coord);
+                        _activeChunkLods.Remove(build.Coord);
+                        ReleaseChunkView(currentView);
+                    }
                 }
 
                 if (!isDesired && hasChunk)
                 {
-                    UnloadChunk(build.Coord);
+                    _chunkStore.RemoveAndDispose(build.Coord);
+                }
+
+                if (isDesired && desiredLod != build.TargetLod)
+                {
+                    EnqueueChunkLoad(build.Coord);
                 }
 
                 return;
@@ -800,10 +1021,19 @@ public sealed class WorldSystem : MonoBehaviour
                     operation.View.ClearMesh();
                 }
 
-                chunk.ClearSubChunkDirty(operation.SubChunkIndex);
+                if (build.TargetLod == LOD0)
+                {
+                    chunk.ClearSubChunkDirty(operation.SubChunkIndex);
+                }
             }
 
+            _activeChunkLods[build.Coord] = build.TargetLod;
             build.View.gameObject.SetActive(true);
+
+            if (build.TargetLod != LOD0)
+            {
+                _chunkStore.RemoveAndDispose(build.Coord);
+            }
         }
         finally
         {
@@ -866,6 +1096,7 @@ public sealed class WorldSystem : MonoBehaviour
                     TriangleOffsets = triangleOffsets,
                     SubChunkIndex = subChunkIndex,
                     Vertices = meshData.Vertices,
+                    Normals = meshData.Normals,
                     Indices = meshData.Indices,
                     MaterialInfo = meshData.MaterialInfo
                 };
@@ -1131,16 +1362,43 @@ public sealed class WorldSystem : MonoBehaviour
         return _pendingGenerations.ContainsKey(coord) || _pendingChunkMeshBuilds.ContainsKey(coord);
     }
 
+    private static int ResolveDesiredLod(int distance, int baseRadius)
+    {
+        if (distance <= baseRadius)
+        {
+            return LOD0;
+        }
+
+        if (distance <= baseRadius * 2)
+        {
+            return LOD1;
+        }
+
+        if (distance <= baseRadius * 3)
+        {
+            return LOD2;
+        }
+
+        return -1;
+    }
+
+    private static int GetHorizontalStepForLod(int lodLevel)
+    {
+        switch (lodLevel)
+        {
+            case LOD1:
+                return 2;
+            case LOD2:
+                return 4;
+            default:
+                return 1;
+        }
+    }
+
     private static int ChunkDistanceSq(ChunkCoord coord, ChunkCoord center)
     {
         int dx = coord.X - center.X;
         int dz = coord.Z - center.Z;
         return dx * dx + dz * dz;
-    }
-
-    private static int ChunkCountForRadius(int radius)
-    {
-        int diameter = radius * 2 + 1;
-        return diameter * diameter;
     }
 }

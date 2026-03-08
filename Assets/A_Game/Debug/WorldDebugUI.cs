@@ -1,8 +1,11 @@
+using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Profiling;
 using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
 /// <summary>
 /// Runtime debug overlay and translucent chunk boundary renderer.
@@ -10,18 +13,31 @@ using UnityEngine.Rendering;
 /// </summary>
 public sealed class WorldDebugUI : MonoBehaviour
 {
+    private enum LodBoundaryDisplayMode
+    {
+        None = 0,
+        Lod0ToLod1 = 1,
+        Lod1ToLod2 = 2,
+        Lod2OuterEdge = 3
+    }
+
     [Header("References")]
     [SerializeField] private WorldSystem _worldSystem;
     [SerializeField] private Camera _referenceCamera;
     [SerializeField] private VoxelEditController _voxelEditController;
     [SerializeField] private GameObject _debugRoot;
-    [SerializeField] private TMP_Text _targetText;
+    [FormerlySerializedAs("_targetText")]
+    [SerializeField] private TMP_Text _leftText;
+    [SerializeField] private TMP_Text _rightText;
 
     [Header("Overlay")]
     [SerializeField] private float _refreshInterval = 0.25f;
 
     [Header("Bounds")]
     [SerializeField] private Color _chunkBoundsColor = new Color(0.2f, 0.8f, 1f, 0.12f);
+    [SerializeField] private Color _lod0ToLod1BoundsColor = new Color(0.35f, 1f, 0.35f, 0.12f);
+    [SerializeField] private Color _lod1ToLod2BoundsColor = new Color(1f, 0.85f, 0.25f, 0.12f);
+    [SerializeField] private Color _lod2OuterBoundsColor = new Color(1f, 0.35f, 0.35f, 0.12f);
 
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorId = Shader.PropertyToID("_Color");
@@ -33,6 +49,7 @@ public sealed class WorldDebugUI : MonoBehaviour
     private bool _areChunkBoundsVisible;
     private bool _isF3Held;
     private bool _consumedF3Chord;
+    private LodBoundaryDisplayMode _lodBoundaryMode;
     private Material _surfaceMaterial;
     private Mesh _quadMesh;
     private string _currentTargetLabel = "Target: Air";
@@ -42,8 +59,9 @@ public sealed class WorldDebugUI : MonoBehaviour
         QualitySettings.vSyncCount = 0;
         Application.targetFrameRate = -1;
 
-        ApplyDebugVisibility(false);
+        ApplyDebugVisibility(true);
         _areChunkBoundsVisible = false;
+        _lodBoundaryMode = LodBoundaryDisplayMode.None;
     }
 
     private void OnEnable()
@@ -58,7 +76,7 @@ public sealed class WorldDebugUI : MonoBehaviour
     {
         HandleDebugShortcuts();
 
-        if (!_isDebugVisible || _targetText == null)
+        if (!_isDebugVisible || (_leftText == null && _rightText == null))
         {
             return;
         }
@@ -80,7 +98,7 @@ public sealed class WorldDebugUI : MonoBehaviour
 
     private void OnRenderObject()
     {
-        if (!_areChunkBoundsVisible || _worldSystem == null)
+        if ((!_areChunkBoundsVisible && _lodBoundaryMode == LodBoundaryDisplayMode.None) || _worldSystem == null)
         {
             return;
         }
@@ -90,23 +108,31 @@ public sealed class WorldDebugUI : MonoBehaviour
             return;
         }
 
-        if (!TryGetFocusCameraPosition(out Vector3 focusPosition))
+        if (_areChunkBoundsVisible)
         {
-            return;
+            if (!TryGetFocusCameraPosition(out Vector3 focusPosition))
+            {
+                return;
+            }
+
+            ChunkCoord centerCoord = WorldMath.WorldCellToChunkCoord(
+                Mathf.FloorToInt(focusPosition.x),
+                Mathf.FloorToInt(focusPosition.z));
+
+            int regionStartX = (centerCoord.X - 1) * WorldConstants.ChunkSizeX;
+            int regionStartZ = (centerCoord.Z - 1) * WorldConstants.ChunkSizeZ;
+            int regionSpan = WorldConstants.ChunkSizeX * 3;
+
+            for (int i = 0; i <= 3; i++)
+            {
+                DrawVerticalXPlane(regionStartX + i * WorldConstants.ChunkSizeX, regionStartZ, regionSpan, _chunkBoundsColor);
+                DrawVerticalZPlane(regionStartZ + i * WorldConstants.ChunkSizeZ, regionStartX, regionSpan, _chunkBoundsColor);
+            }
         }
 
-        ChunkCoord centerCoord = WorldMath.WorldCellToChunkCoord(
-            Mathf.FloorToInt(focusPosition.x),
-            Mathf.FloorToInt(focusPosition.z));
-
-        int regionStartX = (centerCoord.X - 1) * WorldConstants.ChunkSizeX;
-        int regionStartZ = (centerCoord.Z - 1) * WorldConstants.ChunkSizeZ;
-        int regionSpan = WorldConstants.ChunkSizeX * 3;
-
-        for (int i = 0; i <= 3; i++)
+        if (_lodBoundaryMode != LodBoundaryDisplayMode.None)
         {
-            DrawVerticalXPlane(regionStartX + i * WorldConstants.ChunkSizeX, regionStartZ, regionSpan, _chunkBoundsColor);
-            DrawVerticalZPlane(regionStartZ + i * WorldConstants.ChunkSizeZ, regionStartX, regionSpan, _chunkBoundsColor);
+            DrawLodBoundary();
         }
     }
 
@@ -145,27 +171,53 @@ public sealed class WorldDebugUI : MonoBehaviour
 
     private void UpdateDisplayedText()
     {
-        if (_targetText == null)
+        if (_leftText == null && _rightText == null)
         {
             return;
         }
 
+        int activeChunks = _worldSystem != null ? _worldSystem.ActiveChunkCount : 0;
         int loadedChunks = _worldSystem != null ? _worldSystem.LoadedChunkCount : 0;
         int pendingLoads = _worldSystem != null ? _worldSystem.PendingChunkLoadCount : 0;
         int pendingGenerations = _worldSystem != null ? _worldSystem.PendingGenerationCount : 0;
         int pendingMeshBuilds = _worldSystem != null ? _worldSystem.PendingMeshBuildCount : 0;
         int pendingUnloads = _worldSystem != null ? _worldSystem.PendingChunkUnloadCount : 0;
         int pooledViews = _worldSystem != null ? _worldSystem.PooledChunkViewCount : 0;
-        _targetText.text =
+        string managedMemory = FormatBytes(GC.GetTotalMemory(false));
+        string allocatedMemory = FormatBytes(Profiler.GetTotalAllocatedMemoryLong());
+        string reservedMemory = FormatBytes(Profiler.GetTotalReservedMemoryLong());
+        string leftText =
             $"FPS: {_currentFps}\n" +
-            $"LoadedChunks: {loadedChunks}\n" +
+            $"{_currentTargetLabel}\n" +
+            $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}\n" +
+            $"LodBounds: {GetLodBoundaryModeLabel()}\n" +
+            $"Seed: {(_worldSystem != null ? _worldSystem.GenerationSeed : 0)}";
+
+        string rightText =
+            $"ActiveChunks: {activeChunks}\n" +
+            $"Lod0Chunks: {loadedChunks}\n" +
             $"QueuedLoads: {pendingLoads}\n" +
             $"PendingGenerations: {pendingGenerations}\n" +
             $"PendingMeshBuilds: {pendingMeshBuilds}\n" +
             $"PendingUnloads: {pendingUnloads}\n" +
             $"PooledViews: {pooledViews}\n" +
-            $"{_currentTargetLabel}\n" +
-            $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}";
+            $"ManagedMemory: {managedMemory}\n" +
+            $"AllocatedMemory: {allocatedMemory}\n" +
+            $"ReservedMemory: {reservedMemory}";
+
+        if (_leftText != null)
+        {
+            _leftText.text = leftText;
+        }
+
+        if (_rightText != null)
+        {
+            _rightText.text = rightText;
+        }
+        else if (_leftText != null)
+        {
+            _leftText.text = $"{leftText}\n{rightText}";
+        }
     }
 
     private string BuildTargetLabel()
@@ -224,6 +276,13 @@ public sealed class WorldDebugUI : MonoBehaviour
             RefreshText();
         }
 
+        if (_isF3Held && keyboard.lKey.wasPressedThisFrame)
+        {
+            _lodBoundaryMode = GetNextLodBoundaryMode(_lodBoundaryMode);
+            _consumedF3Chord = true;
+            RefreshText();
+        }
+
         if (_isF3Held && keyboard.f3Key.wasReleasedThisFrame)
         {
             if (!_consumedF3Chord)
@@ -244,15 +303,70 @@ public sealed class WorldDebugUI : MonoBehaviour
         {
             _debugRoot.SetActive(visible);
         }
-        else if (_targetText != null)
+        else
         {
-            _targetText.enabled = visible;
+            if (_leftText != null)
+            {
+                _leftText.enabled = visible;
+            }
+
+            if (_rightText != null)
+            {
+                _rightText.enabled = visible;
+            }
         }
 
         if (visible)
         {
             RefreshText();
         }
+    }
+
+    private void DrawLodBoundary()
+    {
+        if (_worldSystem == null || !_worldSystem.TryGetStreamingCenter(out ChunkCoord centerCoord))
+        {
+            return;
+        }
+
+        int baseRadius = _worldSystem.LoadRadius;
+        int chunkRadius;
+        Color color;
+
+        switch (_lodBoundaryMode)
+        {
+            case LodBoundaryDisplayMode.Lod0ToLod1:
+                chunkRadius = baseRadius;
+                color = _lod0ToLod1BoundsColor;
+                break;
+            case LodBoundaryDisplayMode.Lod1ToLod2:
+                chunkRadius = baseRadius * 2;
+                color = _lod1ToLod2BoundsColor;
+                break;
+            case LodBoundaryDisplayMode.Lod2OuterEdge:
+                chunkRadius = baseRadius * 3;
+                color = _lod2OuterBoundsColor;
+                break;
+            default:
+                return;
+        }
+
+        int minChunkX = centerCoord.X - chunkRadius;
+        int maxChunkXExclusive = centerCoord.X + chunkRadius + 1;
+        int minChunkZ = centerCoord.Z - chunkRadius;
+        int maxChunkZExclusive = centerCoord.Z + chunkRadius + 1;
+
+        int worldMinX = minChunkX * WorldConstants.ChunkSizeX;
+        int worldMaxX = maxChunkXExclusive * WorldConstants.ChunkSizeX;
+        int worldMinZ = minChunkZ * WorldConstants.ChunkSizeZ;
+        int worldMaxZ = maxChunkZExclusive * WorldConstants.ChunkSizeZ;
+        int spanX = worldMaxX - worldMinX;
+        int spanZ = worldMaxZ - worldMinZ;
+
+        DrawVerticalXPlane(worldMinX, worldMinZ, spanZ, color);
+        DrawVerticalXPlane(worldMaxX, worldMinZ, spanZ, color);
+        DrawVerticalZPlane(worldMinZ, worldMinX, spanX, color);
+        DrawVerticalZPlane(worldMaxZ, worldMinX, spanX, color);
     }
 
     private bool EnsureSurfaceResources()
@@ -376,5 +490,59 @@ public sealed class WorldDebugUI : MonoBehaviour
         matrix.SetColumn(2, new Vector4(normal.x, normal.y, normal.z, 0f));
         matrix.SetColumn(3, new Vector4(origin.x, origin.y, origin.z, 1f));
         return matrix;
+    }
+
+    private static LodBoundaryDisplayMode GetNextLodBoundaryMode(LodBoundaryDisplayMode mode)
+    {
+        switch (mode)
+        {
+            case LodBoundaryDisplayMode.None:
+                return LodBoundaryDisplayMode.Lod0ToLod1;
+            case LodBoundaryDisplayMode.Lod0ToLod1:
+                return LodBoundaryDisplayMode.Lod1ToLod2;
+            case LodBoundaryDisplayMode.Lod1ToLod2:
+                return LodBoundaryDisplayMode.Lod2OuterEdge;
+            default:
+                return LodBoundaryDisplayMode.None;
+        }
+    }
+
+    private string GetLodBoundaryModeLabel()
+    {
+        switch (_lodBoundaryMode)
+        {
+            case LodBoundaryDisplayMode.Lod0ToLod1:
+                return "LOD0-1";
+            case LodBoundaryDisplayMode.Lod1ToLod2:
+                return "LOD1-2";
+            case LodBoundaryDisplayMode.Lod2OuterEdge:
+                return "LOD2-END";
+            default:
+                return "OFF";
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        const double kilo = 1024d;
+        const double mega = kilo * 1024d;
+        const double giga = mega * 1024d;
+
+        if (bytes >= giga)
+        {
+            return $"{bytes / giga:F2} GB";
+        }
+
+        if (bytes >= mega)
+        {
+            return $"{bytes / mega:F1} MB";
+        }
+
+        if (bytes >= kilo)
+        {
+            return $"{bytes / kilo:F1} KB";
+        }
+
+        return $"{bytes} B";
     }
 }

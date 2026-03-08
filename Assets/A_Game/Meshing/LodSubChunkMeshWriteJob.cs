@@ -4,23 +4,20 @@ using Unity.Jobs;
 using Unity.Mathematics;
 
 /// <summary>
-/// Count 단계에서 계산한 triangle 수와 offset을 바탕으로
-/// 실제 버텍스와 인덱스를 출력 버퍼에 기록하는 Job이다.
-///
-/// 이 Job은 count 단계와 완전히 같은 규칙으로 동작해야 한다.
-/// 코너 순서, cube index 비트 순서, edge 보간 규칙, 퇴화 삼각형 제거 조건이
-/// 하나라도 어긋나면 triangle 개수와 offset이 맞지 않아
-/// 구멍, 뒤틀린 삼각형, MeshCollider cooking 오류가 발생한다.
+/// Writes render-only LOD subchunk triangles sampled directly from world-space terrain rules.
 /// </summary>
- [BurstCompile]
-public struct SubChunkMeshWriteJob : IJobParallelFor
+[BurstCompile]
+public struct LodSubChunkMeshWriteJob : IJobParallelFor
 {
-    [ReadOnly] public NativeArray<byte> Density;
-    [ReadOnly] public NativeArray<byte> MaterialIds;
+    public ChunkCoord Coord;
+    public TerrainGenerationSettings Settings;
+    public int SubChunkIndex;
+    public int HorizontalStep;
+    public int CellsX;
+    public int CellsZ;
+
     [ReadOnly] public NativeArray<byte> TriangleCounts;
     [ReadOnly] public NativeArray<int> TriangleOffsets;
-
-    public int SubChunkIndex;
 
     [NativeDisableParallelForRestriction]
     [WriteOnly] public NativeArray<float3> Vertices;
@@ -41,29 +38,35 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
             return;
         }
 
-        int localX = index % WorldConstants.SubChunkSize;
-        int localZ = (index / WorldConstants.SubChunkSize) % WorldConstants.SubChunkSize;
-        int localY = index / (WorldConstants.SubChunkSize * WorldConstants.SubChunkSize);
+        int localX = index % CellsX;
+        int localZ = (index / CellsX) % CellsZ;
+        int localY = index / (CellsX * CellsZ);
         int sampleBaseY = WorldMath.SubChunkStartY(SubChunkIndex) + localY;
+        int worldBaseX = Coord.X * WorldConstants.ChunkSizeX + localX * HorizontalStep;
+        int worldBaseZ = Coord.Z * WorldConstants.ChunkSizeZ + localZ * HorizontalStep;
 
-        // 샘플 프로젝트의 표준 Marching Cubes 코너 순서를 그대로 사용한다.
-        float3 p0 = new float3(localX + 0, localY + 0, localZ + 0);
-        float3 p1 = new float3(localX + 1, localY + 0, localZ + 0);
-        float3 p2 = new float3(localX + 1, localY + 0, localZ + 1);
-        float3 p3 = new float3(localX + 0, localY + 0, localZ + 1);
-        float3 p4 = new float3(localX + 0, localY + 1, localZ + 0);
-        float3 p5 = new float3(localX + 1, localY + 1, localZ + 0);
-        float3 p6 = new float3(localX + 1, localY + 1, localZ + 1);
-        float3 p7 = new float3(localX + 0, localY + 1, localZ + 1);
+        float x0 = localX * HorizontalStep;
+        float x1 = x0 + HorizontalStep;
+        float z0 = localZ * HorizontalStep;
+        float z1 = z0 + HorizontalStep;
 
-        byte d0 = ReadDensity(localX + 0, sampleBaseY + 0, localZ + 0);
-        byte d1 = ReadDensity(localX + 1, sampleBaseY + 0, localZ + 0);
-        byte d2 = ReadDensity(localX + 1, sampleBaseY + 0, localZ + 1);
-        byte d3 = ReadDensity(localX + 0, sampleBaseY + 0, localZ + 1);
-        byte d4 = ReadDensity(localX + 0, sampleBaseY + 1, localZ + 0);
-        byte d5 = ReadDensity(localX + 1, sampleBaseY + 1, localZ + 0);
-        byte d6 = ReadDensity(localX + 1, sampleBaseY + 1, localZ + 1);
-        byte d7 = ReadDensity(localX + 0, sampleBaseY + 1, localZ + 1);
+        float3 p0 = new float3(x0, localY + 0, z0);
+        float3 p1 = new float3(x1, localY + 0, z0);
+        float3 p2 = new float3(x1, localY + 0, z1);
+        float3 p3 = new float3(x0, localY + 0, z1);
+        float3 p4 = new float3(x0, localY + 1, z0);
+        float3 p5 = new float3(x1, localY + 1, z0);
+        float3 p6 = new float3(x1, localY + 1, z1);
+        float3 p7 = new float3(x0, localY + 1, z1);
+
+        byte d0 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 0, worldBaseZ);
+        byte d1 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 0, worldBaseZ);
+        byte d2 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 0, worldBaseZ + HorizontalStep);
+        byte d3 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 0, worldBaseZ + HorizontalStep);
+        byte d4 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 1, worldBaseZ);
+        byte d5 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 1, worldBaseZ);
+        byte d6 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 1, worldBaseZ + HorizontalStep);
+        byte d7 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 1, worldBaseZ + HorizontalStep);
 
         int cubeIndex = 0;
         if (MarchingCubesCommon.IsInside(d0)) cubeIndex |= 1 << 0;
@@ -83,7 +86,7 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
         int triangleStart = TriangleOffsets[index];
         int localTriangleIndex = 0;
         int rowIndex = cubeIndex * MarchingCubesTables.TriangleTableStride;
-        float2 materialInfo = new float2(ReadMaterial(localX, sampleBaseY, localZ), 0f);
+        float2 materialInfo = new float2(TerrainDensityUtility.SampleMaterialId(Settings, worldBaseX, sampleBaseY, worldBaseZ), 0f);
 
         for (int i = 0; i < MarchingCubesTables.TriangleTableStride; i += 3)
         {
@@ -127,16 +130,6 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
 
             localTriangleIndex++;
         }
-    }
-
-    private byte ReadDensity(int sampleX, int sampleY, int sampleZ)
-    {
-        return Density[WorldMath.SampleIndex(sampleX, sampleY, sampleZ)];
-    }
-
-    private byte ReadMaterial(int cellX, int cellY, int cellZ)
-    {
-        return MaterialIds[WorldMath.CellIndex(cellX, cellY, cellZ)];
     }
 
     private static bool IsValidTriangle(float3 a, float3 b, float3 c)
