@@ -6,7 +6,7 @@ using UnityEngine;
 /// 월드 데이터는 이 클래스가 소유하지 않는다.
 /// 외부에서 만들어진 메쉬 결과를 받아 MeshFilter / MeshCollider에 반영하는 역할만 담당한다.
 /// </summary>
-[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer), typeof(MeshCollider))]
+[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public sealed class SubChunkView : MonoBehaviour
 {
     [SerializeField] private MeshFilter _meshFilter;
@@ -27,7 +27,10 @@ public sealed class SubChunkView : MonoBehaviour
     {
         CacheComponents();
         EnsureMeshCreated();
-        _meshCollider.convex = false;
+        if (_meshCollider != null)
+        {
+            _meshCollider.convex = false;
+        }
     }
 
     public void SetMaterial(Material material)
@@ -60,7 +63,10 @@ public sealed class SubChunkView : MonoBehaviour
     {
         Mesh mesh = EnsureMeshCreated();
         mesh.Clear();
-        _meshCollider.sharedMesh = null;
+        if (_meshCollider != null)
+        {
+            _meshCollider.sharedMesh = null;
+        }
     }
 
     private void CacheComponents()

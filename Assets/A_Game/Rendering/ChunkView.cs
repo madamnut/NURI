@@ -6,6 +6,7 @@ using UnityEngine;
 public sealed class ChunkView : MonoBehaviour
 {
     [SerializeField] private SubChunkView[] _subChunks = new SubChunkView[WorldConstants.SubChunkCount];
+    [SerializeField] private SubChunkView[] _waterSubChunks = new SubChunkView[WorldConstants.SubChunkCount];
 
     public SubChunkView GetSubChunk(int index)
     {
@@ -15,6 +16,16 @@ public sealed class ChunkView : MonoBehaviour
         }
 
         return _subChunks[index];
+    }
+
+    public SubChunkView GetWaterSubChunk(int index)
+    {
+        if ((uint)index >= (uint)_waterSubChunks.Length)
+        {
+            return null;
+        }
+
+        return _waterSubChunks[index];
     }
 
     public void SetChunkCoord(ChunkCoord coord)
@@ -33,6 +44,16 @@ public sealed class ChunkView : MonoBehaviour
         }
     }
 
+    public void SetWaterMaterial(Material material)
+    {
+        EnsureSubChunks();
+
+        for (int i = 0; i < _waterSubChunks.Length; i++)
+        {
+            _waterSubChunks[i].SetMaterial(material);
+        }
+    }
+
     public void ClearAllSubChunks()
     {
         EnsureSubChunks();
@@ -40,6 +61,23 @@ public sealed class ChunkView : MonoBehaviour
         for (int i = 0; i < _subChunks.Length; i++)
         {
             _subChunks[i].ClearMesh();
+            _waterSubChunks[i].ClearMesh();
+        }
+    }
+
+    public void SetWaterRenderersEnabled(bool isEnabled)
+    {
+        EnsureSubChunks();
+
+        for (int i = 0; i < _waterSubChunks.Length; i++)
+        {
+            SubChunkView waterView = _waterSubChunks[i];
+            if (waterView == null || waterView.MeshRenderer == null)
+            {
+                continue;
+            }
+
+            waterView.MeshRenderer.enabled = isEnabled;
         }
     }
 
@@ -59,6 +97,11 @@ public sealed class ChunkView : MonoBehaviour
         {
             _subChunks = new SubChunkView[WorldConstants.SubChunkCount];
         }
+
+        if (_waterSubChunks == null || _waterSubChunks.Length != WorldConstants.SubChunkCount)
+        {
+            _waterSubChunks = new SubChunkView[WorldConstants.SubChunkCount];
+        }
     }
 
     private void EnsureSubChunks()
@@ -66,6 +109,11 @@ public sealed class ChunkView : MonoBehaviour
         if (_subChunks == null || _subChunks.Length != WorldConstants.SubChunkCount)
         {
             _subChunks = new SubChunkView[WorldConstants.SubChunkCount];
+        }
+
+        if (_waterSubChunks == null || _waterSubChunks.Length != WorldConstants.SubChunkCount)
+        {
+            _waterSubChunks = new SubChunkView[WorldConstants.SubChunkCount];
         }
 
         for (int i = 0; i < WorldConstants.SubChunkCount; i++)
@@ -88,6 +136,26 @@ public sealed class ChunkView : MonoBehaviour
                 }
 
                 _subChunks[i] = view;
+            }
+
+            if (_waterSubChunks[i] == null)
+            {
+                Transform waterChild = transform.Find($"WaterSubChunk_{i:00}");
+                if (waterChild == null)
+                {
+                    GameObject go = new GameObject($"WaterSubChunk_{i:00}");
+                    go.transform.SetParent(transform, false);
+                    go.transform.localPosition = new Vector3(0f, i * WorldConstants.SubChunkSize, 0f);
+                    waterChild = go.transform;
+                }
+
+                SubChunkView waterView = waterChild.GetComponent<SubChunkView>();
+                if (waterView == null)
+                {
+                    waterView = waterChild.gameObject.AddComponent<SubChunkView>();
+                }
+
+                _waterSubChunks[i] = waterView;
             }
         }
     }

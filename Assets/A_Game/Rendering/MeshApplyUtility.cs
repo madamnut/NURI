@@ -37,9 +37,12 @@ public static class MeshApplyUtility
         mesh.SetSubMesh(0, new SubMeshDescriptor(0, meshData.Indices.Length, MeshTopology.Triangles), MeshUpdateFlags.DontRecalculateBounds);
         mesh.RecalculateBounds();
 
-        view.MeshCollider.sharedMesh = null;
+        if (view.MeshCollider != null)
+        {
+            view.MeshCollider.sharedMesh = null;
+        }
 
-        if (!applyCollider)
+        if (!applyCollider || view.MeshCollider == null)
         {
             return;
         }

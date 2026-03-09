@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 2100000, guid: 860a66ca4259b384f9ec01b687f71c3c, type: 2}
+  m_SkyboxMaterial: {fileID: 2100000, guid: efd1c33efd2d58340b88804268e6833f, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -391,7 +391,7 @@ Transform:
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 100, y: 100, z: 100}
+  m_LocalPosition: {x: 100, y: 140, z: 100}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -456,7 +456,7 @@ MonoBehaviour:
   _worldSystem: {fileID: 1976003901}
   _playerController: {fileID: 1955707072}
   _brushRadius: 2
-  _editSpeedPerSecond: 600
+  _editSpeedPerSecond: 10
   _maxRayDistance: 500
   _hitMask:
     serializedVersion: 2
@@ -2045,14 +2045,17 @@ MonoBehaviour:
     Octaves: 4
     Lacunarity: 2
     Persistence: 0.5
-    SeaLevel: 63
+    SeaLevel: 100
     BaseDirtHeight: 70
     BaseRockHeight: 65
     SurfaceFade: 8
   _streamingTarget: {fileID: 1955707069}
+  _finiteMap: 0
+  _finiteChunkDiameter: 8
   _baseChunkDiameter: 16
-  _proxy1Border: 32
+  _proxy1Border: 16
   _proxy2Border: 32
+  _renderProxyChunks: 1
   _maxLod0LoadsPerFrame: 2
   _maxProxy1LoadsPerFrame: 1
   _maxProxy2LoadsPerFrame: 1
@@ -2063,9 +2066,19 @@ MonoBehaviour:
   _chunkViewPrefab: {fileID: 68376585372058145, guid: 4adc5534646c11c4788b785e65fb5f88, type: 3}
   _chunkRoot: {fileID: 1976003902}
   _terrainMaterial: {fileID: 2100000, guid: 9936319df9970504e99b5af1ab084fac, type: 2}
+  _fluidMaterial: {fileID: 2100000, guid: defb25b6a15293a47906dc60e49ed3a5, type: 2}
   _terrainMaterialLibrary: {fileID: 11400000, guid: 67d6b29e2bd240c499fe69e462393340, type: 2}
   _applyMeshCollider: 1
   _maxChunkViewPoolCount: 256
+  _enableFluidPlanarReflection: 1
+  _fluidReflectionSourceCamera: {fileID: 330585545}
+  _fluidReflectionMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  _fluidReflectionTextureSize: 1024
+  _fluidReflectionUpdateEveryNthFrame: 1
+  _fluidReflectionClipPlaneOffset: 0.05
+  _hideWaterDuringReflection: 1
   _blendDeadZoneMin: 0.3
   _blendDeadZoneMax: 0.7
 --- !u!4 &1976003902

@@ -1,0 +1,80 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: FluidMat
+  m_Shader: {fileID: 4800000, guid: 68f22df87df84b589975df5ce2111a42, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap:
+    RenderType: Transparent
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _FlowMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MainTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Normal:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _DetailNormalStrength: 0.53
+    - _FalloffDepth: 1
+    - _FalloffStrength: 0
+    - _FresnelPower: 0.76
+    - _GlintScale: 0
+    - _GlintSharpness: 8
+    - _GlintStrength: 0
+    - _NoiseScale: 0.7
+    - _NoiseSpeed: 0.63
+    - _NoiseStrength: 0.735
+    - _PrimaryAmplitudeNoiseStrength: 1
+    - _PrimaryNoiseScale: 0.24
+    - _PrimaryNoiseSpeed: 0.06
+    - _PrimaryPhaseNoiseStrength: 1
+    - _PrimaryWaveAmplitude: 0.198
+    - _PrimaryWaveFrequency: 1.15
+    - _PrimaryWaveSpeed: 1.09
+    - _ReflectionStrength: 0.78
+    - _RefractionStrength: 0.678
+    - _SecondaryAmplitudeNoiseStrength: 0.444
+    - _SecondaryNoiseScale: 0.36
+    - _SecondaryNoiseSpeed: 0.08
+    - _SecondaryPhaseNoiseStrength: 0.281
+    - _SecondaryWaveAmplitude: 0.665
+    - _SecondaryWaveFrequency: 0.7
+    - _SecondaryWaveSpeed: 3.52
+    - _ShimmerScale: 1.2
+    - _ShimmerSpeed: 0.64
+    - _ShimmerStrength: 0.348
+    - _Smoothness: 0.781
+    - _SurfaceAlpha: 1
+    - _UnderwaterRefractionStrength: 0.71
+    m_Colors:
+    - _DeepColor: {r: 0.15218942, g: 0.4048594, b: 0.7169812, a: 1}
+    - _PrimaryWaveDirection: {r: 0.9, g: 0.25, b: 0, a: 0}
+    - _ReflectionTint: {r: 1, g: 1, b: 1, a: 1}
+    - _SecondaryWaveDirection: {r: -4.02, g: 0.94, b: 0, a: 0}
+    - _ShallowColor: {r: 0.054378804, g: 0.6331045, b: 0.8867924, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

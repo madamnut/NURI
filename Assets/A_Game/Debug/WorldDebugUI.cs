@@ -6,6 +6,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.Profiling;
 using UnityEngine.Rendering;
 using UnityEngine.Serialization;
+using System.Text;
 
 /// <summary>
 /// Runtime debug overlay and translucent chunk boundary renderer.
@@ -54,6 +55,10 @@ public sealed class WorldDebugUI : MonoBehaviour
     private Material _surfaceMaterial;
     private Mesh _quadMesh;
     private string _currentTargetLabel = "Target: Air";
+    private readonly List<int> _debugTriangleIndices = new List<int>(3);
+    private readonly List<Vector3> _debugVertices = new List<Vector3>(64);
+    private readonly List<Vector4> _debugMaterialInfo = new List<Vector4>(64);
+    private readonly StringBuilder _targetStringBuilder = new StringBuilder(256);
 
     private void Awake()
     {
@@ -200,6 +205,8 @@ public sealed class WorldDebugUI : MonoBehaviour
         {
             selectedMaterialLabel = selectedMaterialId.ToString();
         }
+        string waterReflectionLabel = _worldSystem != null && _worldSystem.FluidPlanarReflectionEnabled ? "ON" : "OFF";
+        float waterReflectionHeight = _worldSystem != null ? _worldSystem.CurrentFluidReflectionPlaneHeight : 0f;
         string leftText =
             $"FPS: {_currentFps}\n" +
             $"Camera: {cameraModeLabel}\n" +
@@ -208,6 +215,7 @@ public sealed class WorldDebugUI : MonoBehaviour
             $"{_currentTargetLabel}\n" +
             $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}\n" +
             $"LodBounds: {GetLodBoundaryModeLabel()}\n" +
+            $"WaterRefl: {waterReflectionLabel} @ {waterReflectionHeight:F2}\n" +
             $"Paint: {selectedMaterialLabel} (ID: {selectedMaterialId})\n" +
             $"Seed: {(_worldSystem != null ? _worldSystem.GenerationSeed : 0)}";
 
@@ -283,8 +291,84 @@ public sealed class WorldDebugUI : MonoBehaviour
         string materialName = materialLibrary != null
             ? materialLibrary.GetDisplayName(materialId)
             : $"Material {materialId}";
+        _targetStringBuilder.Clear();
+        _targetStringBuilder.Append($"Target: {materialName} (ID: {materialId})");
+        AppendTriangleVertexDebug(hit, materialLibrary, _targetStringBuilder);
+        return _targetStringBuilder.ToString();
+    }
 
-        return $"Target: {materialName} (ID: {materialId})";
+    private void AppendTriangleVertexDebug(RaycastHit hit, TerrainMaterialLibrary materialLibrary, StringBuilder builder)
+    {
+        if (!(hit.collider is MeshCollider meshCollider))
+        {
+            return;
+        }
+
+        Mesh mesh = meshCollider.sharedMesh;
+        if (mesh == null || hit.triangleIndex < 0)
+        {
+            return;
+        }
+
+        _debugTriangleIndices.Clear();
+        mesh.GetTriangles(_debugTriangleIndices, 0);
+        int triangleStart = hit.triangleIndex * 3;
+        if (triangleStart + 2 >= _debugTriangleIndices.Count)
+        {
+            return;
+        }
+
+        _debugVertices.Clear();
+        mesh.GetVertices(_debugVertices);
+        _debugMaterialInfo.Clear();
+        mesh.GetUVs(1, _debugMaterialInfo);
+
+        for (int corner = 0; corner < 3; corner++)
+        {
+            int vertexIndex = _debugTriangleIndices[triangleStart + corner];
+            if ((uint)vertexIndex >= (uint)_debugVertices.Count)
+            {
+                continue;
+            }
+
+            Vector3 worldVertex = hit.collider.transform.TransformPoint(_debugVertices[vertexIndex]);
+            Vector4 materialInfo = (uint)vertexIndex < (uint)_debugMaterialInfo.Count
+                ? _debugMaterialInfo[vertexIndex]
+                : Vector4.zero;
+
+            int sampleX = Mathf.RoundToInt(worldVertex.x);
+            int sampleY = Mathf.RoundToInt(worldVertex.y);
+            int sampleZ = Mathf.RoundToInt(worldVertex.z);
+            byte density = 0;
+            bool hasDensity = _worldSystem.TryGetWorldSampleDensityAt(sampleX, sampleY, sampleZ, out density);
+
+            int primaryId = Mathf.RoundToInt(materialInfo.x);
+            int secondaryId = Mathf.RoundToInt(materialInfo.y);
+            float blendWeight = Mathf.Clamp01(materialInfo.z);
+            string primaryName = primaryId > 0 && materialLibrary != null ? materialLibrary.GetDisplayName((byte)primaryId) : primaryId.ToString();
+            string secondaryName = secondaryId > 0 && materialLibrary != null ? materialLibrary.GetDisplayName((byte)secondaryId) : secondaryId.ToString();
+
+            builder.Append('\n');
+            builder.Append("V");
+            builder.Append(corner);
+            builder.Append(": ");
+            builder.Append(primaryName);
+            builder.Append(" (");
+            builder.Append(primaryId);
+            builder.Append(")");
+            if (secondaryId > 0 && secondaryId != primaryId)
+            {
+                builder.Append(" -> ");
+                builder.Append(secondaryName);
+                builder.Append(" (");
+                builder.Append(secondaryId);
+                builder.Append(") ");
+                builder.Append(blendWeight.ToString("F2"));
+            }
+
+            builder.Append(", D=");
+            builder.Append(hasDensity ? density.ToString() : "N/A");
+        }
     }
 
     private void HandleDebugShortcuts()

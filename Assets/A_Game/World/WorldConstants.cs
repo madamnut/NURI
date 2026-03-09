@@ -82,4 +82,6 @@ public static class WorldConstants
     /// 완전히 가득 찬 상태를 뜻하는 density 값이다.
     /// </summary>
     public const byte FullDensity = 255;
+    public const byte EmptyFluidLevel = 0;
+    public const byte FullFluidLevel = 255;
 }
