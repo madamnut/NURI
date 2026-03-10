@@ -61,14 +61,14 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
         float3 p6 = new float3(x1, localY + 1, z1);
         float3 p7 = new float3(x0, localY + 1, z1);
 
-        byte d0 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 0, worldBaseZ);
-        byte d1 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 0, worldBaseZ);
-        byte d2 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 0, worldBaseZ + HorizontalStep);
-        byte d3 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 0, worldBaseZ + HorizontalStep);
-        byte d4 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 1, worldBaseZ);
-        byte d5 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 1, worldBaseZ);
-        byte d6 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 1, worldBaseZ + HorizontalStep);
-        byte d7 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 1, worldBaseZ + HorizontalStep);
+        sbyte d0 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 0, worldBaseZ);
+        sbyte d1 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 0, worldBaseZ);
+        sbyte d2 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 0, worldBaseZ + HorizontalStep);
+        sbyte d3 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 0, worldBaseZ + HorizontalStep);
+        sbyte d4 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 1, worldBaseZ);
+        sbyte d5 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 1, worldBaseZ);
+        sbyte d6 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX + HorizontalStep, sampleBaseY + 1, worldBaseZ + HorizontalStep);
+        sbyte d7 = TerrainDensityUtility.SampleDensity(Settings, worldBaseX, sampleBaseY + 1, worldBaseZ + HorizontalStep);
 
         int cubeIndex = 0;
         if (MarchingCubesCommon.IsInside(d0)) cubeIndex |= 1 << 0;
@@ -284,7 +284,7 @@ public struct LodSubChunkMeshWriteJob : IJobParallelFor
     private static float3 InterpolateEdge(
         int edgeIndex,
         float3 p0, float3 p1, float3 p2, float3 p3, float3 p4, float3 p5, float3 p6, float3 p7,
-        byte d0, byte d1, byte d2, byte d3, byte d4, byte d5, byte d6, byte d7)
+        sbyte d0, sbyte d1, sbyte d2, sbyte d3, sbyte d4, sbyte d5, sbyte d6, sbyte d7)
     {
         switch (edgeIndex)
         {

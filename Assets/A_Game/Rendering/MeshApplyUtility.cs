@@ -36,6 +36,7 @@ public static class MeshApplyUtility
         mesh.subMeshCount = 1;
         mesh.SetSubMesh(0, new SubMeshDescriptor(0, meshData.Indices.Length, MeshTopology.Triangles), MeshUpdateFlags.DontRecalculateBounds);
         mesh.RecalculateBounds();
+        view.RefreshWireframeMesh();
 
         if (view.MeshCollider != null)
         {
@@ -70,5 +71,6 @@ public static class MeshApplyUtility
         mesh.subMeshCount = 1;
         mesh.SetSubMesh(0, new SubMeshDescriptor(0, meshData.Indices.Length, MeshTopology.Triangles), MeshUpdateFlags.DontRecalculateBounds);
         mesh.RecalculateBounds();
+        view.RefreshWireframeMesh();
     }
 }

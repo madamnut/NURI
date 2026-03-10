@@ -8,12 +8,12 @@ using Unity.Mathematics;
 /// </summary>
 public static class MarchingCubesCommon
 {
-    public static bool IsInside(byte density)
+    public static bool IsInside(sbyte density)
     {
         return density >= WorldConstants.SurfaceThreshold;
     }
 
-    public static int CountTrianglesForTetra(byte d0, byte d1, byte d2, byte d3)
+    public static int CountTrianglesForTetra(sbyte d0, sbyte d1, sbyte d2, sbyte d3)
     {
         int insideCount = 0;
         if (IsInside(d0)) insideCount++;
@@ -29,7 +29,7 @@ public static class MarchingCubesCommon
         return insideCount == 2 ? 2 : 1;
     }
 
-    public static float3 Interpolate(float3 p0, float3 p1, byte d0, byte d1)
+    public static float3 Interpolate(float3 p0, float3 p1, sbyte d0, sbyte d1)
     {
         float iso = WorldConstants.SurfaceThreshold;
         float v0 = d0;

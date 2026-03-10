@@ -21,14 +21,13 @@ public sealed class ChunkData : IDisposable
     /// 청크 전체 density 샘플을 담는 1차원 배열이다.
     /// 실제 크기는 17 x 257 x 17이며, 인덱스 계산은 WorldMath.SampleIndex를 사용한다.
     /// </summary>
-    public NativeArray<byte> Density;
+    public NativeArray<sbyte> Density;
 
     /// <summary>
     /// 각 cell의 대표 material id를 담는 1차원 배열이다.
     /// 실제 크기는 16 x 256 x 16이고, 인덱스 계산은 WorldMath.CellIndex를 사용한다.
     /// </summary>
     public NativeArray<byte> MaterialIds;
-    public NativeArray<byte> WaterLevels;
 
     /// <summary>
     /// 다시 메시가 필요한 서브청크를 비트마스크로 추적한다.
@@ -41,16 +40,15 @@ public sealed class ChunkData : IDisposable
     public ChunkData(ChunkCoord coord)
     {
         Coord = coord;
-        Density = new NativeArray<byte>(WorldConstants.ChunkSampleCount, Allocator.Persistent);
+        Density = new NativeArray<sbyte>(WorldConstants.ChunkSampleCount, Allocator.Persistent);
         MaterialIds = new NativeArray<byte>(WorldConstants.ChunkCellCount, Allocator.Persistent);
-        WaterLevels = new NativeArray<byte>(WorldConstants.ChunkCellCount, Allocator.Persistent);
         DirtySubChunkMask = 0;
     }
 
     /// <summary>
     /// density 배열이 유효하게 생성되어 있는지 반환한다.
     /// </summary>
-    public bool IsCreated => Density.IsCreated && MaterialIds.IsCreated && WaterLevels.IsCreated;
+    public bool IsCreated => Density.IsCreated && MaterialIds.IsCreated;
 
     /// <summary>
     /// 특정 서브청크를 dirty 상태로 표시한다.
@@ -87,7 +85,7 @@ public sealed class ChunkData : IDisposable
     /// <summary>
     /// density 샘플 값을 읽는다.
     /// </summary>
-    public byte GetDensity(int sampleX, int sampleY, int sampleZ)
+    public sbyte GetDensity(int sampleX, int sampleY, int sampleZ)
     {
         return Density[WorldMath.SampleIndex(sampleX, sampleY, sampleZ)];
     }
@@ -95,7 +93,7 @@ public sealed class ChunkData : IDisposable
     /// <summary>
     /// density 샘플 값을 기록한다.
     /// </summary>
-    public void SetDensity(int sampleX, int sampleY, int sampleZ, byte value)
+    public void SetDensity(int sampleX, int sampleY, int sampleZ, sbyte value)
     {
         Density[WorldMath.SampleIndex(sampleX, sampleY, sampleZ)] = value;
     }
@@ -116,16 +114,6 @@ public sealed class ChunkData : IDisposable
         MaterialIds[WorldMath.CellIndex(cellX, cellY, cellZ)] = value;
     }
 
-    public byte GetWaterLevel(int cellX, int cellY, int cellZ)
-    {
-        return WaterLevels[WorldMath.CellIndex(cellX, cellY, cellZ)];
-    }
-
-    public void SetWaterLevel(int cellX, int cellY, int cellZ, byte value)
-    {
-        WaterLevels[WorldMath.CellIndex(cellX, cellY, cellZ)] = value;
-    }
-
     /// <summary>
     /// 청크가 월드에서 제거될 때 NativeArray 메모리를 해제한다.
     /// </summary>
@@ -141,9 +129,5 @@ public sealed class ChunkData : IDisposable
             MaterialIds.Dispose();
         }
 
-        if (WaterLevels.IsCreated)
-        {
-            WaterLevels.Dispose();
-        }
     }
 }

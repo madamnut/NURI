@@ -15,7 +15,7 @@ using Unity.Mathematics;
  [BurstCompile]
 public struct SubChunkMeshWriteJob : IJobParallelFor
 {
-    [ReadOnly] public NativeArray<byte> Density;
+    [ReadOnly] public NativeArray<sbyte> Density;
     [ReadOnly] public NativeArray<byte> MaterialIds;
     [ReadOnly] public NativeArray<byte> TriangleCounts;
     [ReadOnly] public NativeArray<int> TriangleOffsets;
@@ -58,14 +58,14 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
         float3 p6 = new float3(localX + 1, localY + 1, localZ + 1);
         float3 p7 = new float3(localX + 0, localY + 1, localZ + 1);
 
-        byte d0 = ReadDensity(localX + 0, sampleBaseY + 0, localZ + 0);
-        byte d1 = ReadDensity(localX + 1, sampleBaseY + 0, localZ + 0);
-        byte d2 = ReadDensity(localX + 1, sampleBaseY + 0, localZ + 1);
-        byte d3 = ReadDensity(localX + 0, sampleBaseY + 0, localZ + 1);
-        byte d4 = ReadDensity(localX + 0, sampleBaseY + 1, localZ + 0);
-        byte d5 = ReadDensity(localX + 1, sampleBaseY + 1, localZ + 0);
-        byte d6 = ReadDensity(localX + 1, sampleBaseY + 1, localZ + 1);
-        byte d7 = ReadDensity(localX + 0, sampleBaseY + 1, localZ + 1);
+        sbyte d0 = ReadDensity(localX + 0, sampleBaseY + 0, localZ + 0);
+        sbyte d1 = ReadDensity(localX + 1, sampleBaseY + 0, localZ + 0);
+        sbyte d2 = ReadDensity(localX + 1, sampleBaseY + 0, localZ + 1);
+        sbyte d3 = ReadDensity(localX + 0, sampleBaseY + 0, localZ + 1);
+        sbyte d4 = ReadDensity(localX + 0, sampleBaseY + 1, localZ + 0);
+        sbyte d5 = ReadDensity(localX + 1, sampleBaseY + 1, localZ + 0);
+        sbyte d6 = ReadDensity(localX + 1, sampleBaseY + 1, localZ + 1);
+        sbyte d7 = ReadDensity(localX + 0, sampleBaseY + 1, localZ + 1);
 
         int cubeIndex = 0;
         if (MarchingCubesCommon.IsInside(d0)) cubeIndex |= 1 << 0;
@@ -132,7 +132,7 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
         }
     }
 
-    private byte ReadDensity(int sampleX, int sampleY, int sampleZ)
+    private sbyte ReadDensity(int sampleX, int sampleY, int sampleZ)
     {
         return Density[WorldMath.SampleIndex(sampleX, sampleY, sampleZ)];
     }
@@ -292,7 +292,7 @@ public struct SubChunkMeshWriteJob : IJobParallelFor
     private static float3 InterpolateEdge(
         int edgeIndex,
         float3 p0, float3 p1, float3 p2, float3 p3, float3 p4, float3 p5, float3 p6, float3 p7,
-        byte d0, byte d1, byte d2, byte d3, byte d4, byte d5, byte d6, byte d7)
+        sbyte d0, sbyte d1, sbyte d2, sbyte d3, sbyte d4, sbyte d5, sbyte d6, sbyte d7)
     {
         switch (edgeIndex)
         {

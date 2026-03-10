@@ -1,0 +1,1164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Surface Nets Cell Lab</title>
+  <style>
+    :root {
+      --bg: #f4efe3;
+      --panel: rgba(251, 247, 237, 0.96);
+      --line: #b9aa8c;
+      --text: #332a1f;
+      --muted: #6a5d49;
+      --accent: #c56b38;
+      --dirt: #9a6a41;
+      --rock: #677078;
+      --sand: #d6b56d;
+      --empty: #efe7d7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(197, 107, 56, 0.14), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(214, 181, 109, 0.18), transparent 24%),
+        linear-gradient(180deg, #f8f4ea, #eee5d3);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 390px 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      padding: 20px;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      overflow: auto;
+    }
+
+    .viewer {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      min-width: 0;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 25px;
+      letter-spacing: 0.01em;
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .card {
+      margin-bottom: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 252, 244, 0.9);
+      box-shadow: 0 8px 28px rgba(70, 49, 20, 0.06);
+    }
+
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 250, 240, 0.84);
+    }
+
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .stat strong {
+      color: var(--text);
+    }
+
+    .canvas-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 720px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.65), transparent 35%),
+        linear-gradient(180deg, #f0e5cf, #d9c6a2 55%, #c9b08a);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hint {
+      position: absolute;
+      left: 14px;
+      bottom: 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--muted);
+      border: 1px solid rgba(97, 73, 46, 0.22);
+      border-radius: 12px;
+      background: rgba(255, 251, 242, 0.85);
+      backdrop-filter: blur(4px);
+      white-space: pre-line;
+      pointer-events: none;
+    }
+
+    .controls {
+      display: grid;
+      gap: 10px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label,
+    .legend-item,
+    .mini-label {
+      font-size: 14px;
+    }
+
+    input,
+    select,
+    button {
+      font: inherit;
+      color: var(--text);
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fffaf0;
+    }
+
+    button {
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff9ee;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: #9e8762;
+      background: #fff3dc;
+    }
+
+    button.primary {
+      background: rgba(197, 107, 56, 0.12);
+      border-color: rgba(197, 107, 56, 0.4);
+    }
+
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .slice-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .slice-card {
+      padding: 10px;
+      border: 1px solid rgba(88, 67, 43, 0.18);
+      border-radius: 12px;
+      background: rgba(255, 252, 246, 0.82);
+    }
+
+    .slice-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .slice-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .cell-button {
+      aspect-ratio: 1;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      padding: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cell-button::after {
+      content: attr(data-label);
+      position: absolute;
+      inset: auto 6px 5px auto;
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(34, 27, 18, 0.72);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    }
+
+    .cell-button.selected {
+      outline: 3px solid rgba(197, 107, 56, 0.9);
+      outline-offset: 1px;
+    }
+
+    .swatch-row {
+      display: grid;
+      gap: 8px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+
+    .swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      flex: 0 0 auto;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    @media (max-width: 1180px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .canvas-wrap {
+        min-height: 60vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>Surface Nets Cell Lab</h1>
+      <p class="subtitle">A small 4x4x4 experiment for cell-based <span class="mono">id + amount</span> data. Edit cell centers, rebuild a naive surface nets mesh, and orbit around the result.</p>
+      <section class="card">
+        <h2>Selected Cell</h2>
+        <div class="controls">
+          <div class="field">
+            <div id="selectionLabel" class="mono">Cell (0, 0, 0)</div>
+          </div>
+          <div class="field">
+            <label for="cellMaterial">Material</label>
+            <select id="cellMaterial"></select>
+          </div>
+          <div class="field">
+            <label for="cellAmount">Amount <span id="amountValue" class="mono">0.00</span></label>
+            <input id="cellAmount" type="range" min="0" max="1" step="0.01" value="0">
+          </div>
+          <div class="button-grid">
+            <button id="fillButton" class="primary">Fill 1.0</button>
+            <button id="emptyButton">Set 0.0</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Mesh Settings</h2>
+        <div class="controls">
+          <div class="field">
+            <label for="isoSlider">Iso threshold <span id="isoValue" class="mono">0.30</span></label>
+            <input id="isoSlider" type="range" min="0.05" max="0.95" step="0.01" value="0.30">
+          </div>
+          <div class="field">
+            <label for="showMode">Show</label>
+            <select id="showMode">
+              <option value="all">All materials</option>
+              <option value="dirt">Dirt only</option>
+              <option value="rock">Rock only</option>
+              <option value="sand">Sand only</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="kernelMode">Node field</label>
+            <select id="kernelMode">
+              <option value="average">Average of adjacent cells</option>
+              <option value="sum">Sum then clamp</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Presets</h2>
+        <div class="button-grid">
+          <button id="presetDirtHill">Dirt Hill</button>
+          <button id="presetRockSpine">Rock Spine</button>
+          <button id="presetSandWave">Sand Wave</button>
+          <button id="presetMixedBlob" class="primary">Mixed Blob</button>
+          <button id="clearButton">Clear</button>
+          <button id="randomButton">Randomize</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Cells By Layer</h2>
+        <div id="sliceStack" class="slice-stack"></div>
+      </section>
+
+      <section class="card">
+        <h2>Legend</h2>
+        <div class="swatch-row">
+          <div class="legend-item"><span class="swatch" style="background: var(--dirt)"></span>Dirt</div>
+          <div class="legend-item"><span class="swatch" style="background: var(--rock)"></span>Rock</div>
+          <div class="legend-item"><span class="swatch" style="background: var(--sand)"></span>Sand</div>
+          <div class="legend-item"><span class="swatch" style="background: var(--empty)"></span>Empty / amount 0</div>
+        </div>
+      </section>
+    </aside>
+
+    <main class="viewer">
+      <div class="toolbar">
+        <div class="stats">
+          <div class="stat">Vertices: <strong id="vertexCount">0</strong></div>
+          <div class="stat">Triangles: <strong id="triangleCount">0</strong></div>
+          <div class="stat">Active Cells: <strong id="activeCells">0</strong></div>
+          <div class="stat">Camera: <strong id="cameraInfo">orbit</strong></div>
+        </div>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="viewport"></canvas>
+        <div class="hint">Drag: orbit
+Wheel: zoom
+Shift + drag: pan
+Click cell slices on the left to edit data</div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const GRID = 4;
+    const NODE = GRID + 1;
+    const MATERIALS = [
+      { key: "dirt", label: "Dirt", color: "#9a6a41", accent: "#c08d5c" },
+      { key: "rock", label: "Rock", color: "#677078", accent: "#96a1aa" },
+      { key: "sand", label: "Sand", color: "#d6b56d", accent: "#f0d193" }
+    ];
+
+    const CORNERS = [
+      [0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1],
+      [0, 1, 0], [1, 1, 0], [1, 1, 1], [0, 1, 1]
+    ];
+
+    const EDGES = [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+      [4, 5], [5, 6], [6, 7], [7, 4],
+      [0, 4], [1, 5], [2, 6], [3, 7]
+    ];
+
+    const EMPTY_STYLE = getComputedStyle(document.documentElement).getPropertyValue("--empty").trim();
+    const selectionLabel = document.getElementById("selectionLabel");
+    const cellMaterial = document.getElementById("cellMaterial");
+    const cellAmount = document.getElementById("cellAmount");
+    const amountValue = document.getElementById("amountValue");
+    const isoSlider = document.getElementById("isoSlider");
+    const isoValue = document.getElementById("isoValue");
+    const showMode = document.getElementById("showMode");
+    const kernelMode = document.getElementById("kernelMode");
+    const sliceStack = document.getElementById("sliceStack");
+    const vertexCount = document.getElementById("vertexCount");
+    const triangleCount = document.getElementById("triangleCount");
+    const activeCells = document.getElementById("activeCells");
+    const cameraInfo = document.getElementById("cameraInfo");
+    const canvas = document.getElementById("viewport");
+    const ctx = canvas.getContext("2d");
+
+    const cells = [];
+    const sliceButtons = [];
+    let selected = { x: 1, y: 1, z: 1 };
+    let meshState = { triangles: [], vertices: 0, active: 0 };
+
+    const camera = {
+      yaw: 0.68,
+      pitch: 0.62,
+      distance: 9.2,
+      panX: 0,
+      panY: 0
+    };
+
+    function cellIndex(x, y, z) {
+      return x + y * GRID + z * GRID * GRID;
+    }
+
+    function nodeIndex(x, y, z) {
+      return x + y * NODE + z * NODE * NODE;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function vec3(x, y, z) {
+      return { x, y, z };
+    }
+
+    function vecSub(a, b) {
+      return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+    }
+
+    function vecDot(a, b) {
+      return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    function vecCross(a, b) {
+      return {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x
+      };
+    }
+
+    function vecLength(v) {
+      return Math.hypot(v.x, v.y, v.z);
+    }
+
+    function vecNormalize(v) {
+      const length = vecLength(v) || 1;
+      return { x: v.x / length, y: v.y / length, z: v.z / length };
+    }
+
+    function materialByKey(key) {
+      return MATERIALS.find(material => material.key === key);
+    }
+
+    function initCells() {
+      for (let z = 0; z < GRID; z++) {
+        for (let y = 0; y < GRID; y++) {
+          for (let x = 0; x < GRID; x++) {
+            cells[cellIndex(x, y, z)] = { id: "dirt", amount: 0 };
+          }
+        }
+      }
+    }
+
+    function initMaterialOptions() {
+      for (const material of MATERIALS) {
+        const option = document.createElement("option");
+        option.value = material.key;
+        option.textContent = material.label;
+        cellMaterial.appendChild(option);
+      }
+    }
+
+    function setCell(x, y, z, id, amount) {
+      const cell = cells[cellIndex(x, y, z)];
+      cell.id = id;
+      cell.amount = clamp(amount, 0, 1);
+    }
+
+    function selectedCell() {
+      return cells[cellIndex(selected.x, selected.y, selected.z)];
+    }
+
+    function amountToAlpha(amount) {
+      return 0.15 + amount * 0.85;
+    }
+
+    function buildSliceUI() {
+      sliceStack.innerHTML = "";
+      sliceButtons.length = 0;
+
+      for (let y = GRID - 1; y >= 0; y--) {
+        const card = document.createElement("div");
+        card.className = "slice-card";
+
+        const head = document.createElement("div");
+        head.className = "slice-head";
+        head.innerHTML = `<strong>Y = ${y}</strong><span class="mini-label mono">top-down</span>`;
+
+        const grid = document.createElement("div");
+        grid.className = "slice-grid";
+
+        for (let z = GRID - 1; z >= 0; z--) {
+          for (let x = 0; x < GRID; x++) {
+            const button = document.createElement("button");
+            button.className = "cell-button";
+            button.dataset.x = x;
+            button.dataset.y = y;
+            button.dataset.z = z;
+            button.addEventListener("click", () => {
+              selected = { x, y, z };
+              syncSelectionControls();
+              rebuild();
+            });
+            sliceButtons.push(button);
+            grid.appendChild(button);
+          }
+        }
+
+        card.appendChild(head);
+        card.appendChild(grid);
+        sliceStack.appendChild(card);
+      }
+    }
+
+    function updateSliceButtons() {
+      for (const button of sliceButtons) {
+        const x = Number(button.dataset.x);
+        const y = Number(button.dataset.y);
+        const z = Number(button.dataset.z);
+        const cell = cells[cellIndex(x, y, z)];
+        const material = materialByKey(cell.id);
+        const isSelected = x === selected.x && y === selected.y && z === selected.z;
+        button.classList.toggle("selected", isSelected);
+        button.dataset.label = cell.amount > 0 ? cell.amount.toFixed(2) : "0";
+
+        if (cell.amount <= 0.001) {
+          button.style.background = EMPTY_STYLE;
+          button.style.opacity = "1";
+        } else {
+          button.style.background = material.color;
+          button.style.opacity = amountToAlpha(cell.amount).toFixed(2);
+        }
+      }
+    }
+
+    function syncSelectionControls() {
+      const cell = selectedCell();
+      selectionLabel.textContent = `Cell (${selected.x}, ${selected.y}, ${selected.z})`;
+      cellMaterial.value = cell.id;
+      cellAmount.value = cell.amount.toFixed(2);
+      amountValue.textContent = Number(cell.amount).toFixed(2);
+      updateSliceButtons();
+    }
+
+    function clearCells() {
+      for (const cell of cells) {
+        cell.id = "dirt";
+        cell.amount = 0;
+      }
+    }
+
+    function applyPreset(name) {
+      clearCells();
+
+      for (let z = 0; z < GRID; z++) {
+        for (let y = 0; y < GRID; y++) {
+          for (let x = 0; x < GRID; x++) {
+            const dx = x - 1.5;
+            const dy = y - 1.5;
+            const dz = z - 1.5;
+            const radius = Math.hypot(dx, dy, dz);
+
+            if (name === "dirtHill") {
+              const amount = clamp(1.15 - radius * 0.38 - y * 0.08, 0, 1);
+              if (amount > 0.01) setCell(x, y, z, "dirt", amount);
+            } else if (name === "rockSpine") {
+              const spine = clamp(1.0 - Math.abs(x - 1.5) * 0.55 - Math.abs(z - 1.5) * 0.25 - Math.abs(y - 1.6) * 0.2, 0, 1);
+              if (spine > 0.01) setCell(x, y, z, "rock", spine);
+            } else if (name === "sandWave") {
+              const wave = 0.5 + 0.35 * Math.sin((x + z) * 1.15) - y * 0.18;
+              const amount = clamp(wave, 0, 1);
+              if (amount > 0.01) setCell(x, y, z, "sand", amount);
+            } else if (name === "mixedBlob") {
+              const amount = clamp(1.08 - radius * 0.42, 0, 1);
+              if (amount > 0.01) {
+                const materialKey = y >= 2 ? "sand" : (x + z > 3 ? "rock" : "dirt");
+                setCell(x, y, z, materialKey, amount);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    function randomizeCells() {
+      clearCells();
+      for (let z = 0; z < GRID; z++) {
+        for (let y = 0; y < GRID; y++) {
+          for (let x = 0; x < GRID; x++) {
+            const amount = Math.random();
+            if (amount < 0.18) {
+              continue;
+            }
+            const material = MATERIALS[Math.floor(Math.random() * MATERIALS.length)];
+            setCell(x, y, z, material.key, Math.pow(amount, 1.45));
+          }
+        }
+      }
+    }
+
+    function buildNodeField(materialKey) {
+      const field = new Float32Array(NODE * NODE * NODE);
+      const mode = kernelMode.value;
+
+      for (let z = 0; z < NODE; z++) {
+        for (let y = 0; y < NODE; y++) {
+          for (let x = 0; x < NODE; x++) {
+            let total = 0;
+            let contributors = 0;
+
+            for (let dz = -1; dz <= 0; dz++) {
+              for (let dy = -1; dy <= 0; dy++) {
+                for (let dx = -1; dx <= 0; dx++) {
+                  const cx = x + dx;
+                  const cy = y + dy;
+                  const cz = z + dz;
+                  if (cx < 0 || cy < 0 || cz < 0 || cx >= GRID || cy >= GRID || cz >= GRID) {
+                    continue;
+                  }
+                  contributors++;
+                  const cell = cells[cellIndex(cx, cy, cz)];
+                  if (cell.id === materialKey) {
+                    total += cell.amount;
+                  }
+                }
+              }
+            }
+
+            if (mode === "sum") {
+              field[nodeIndex(x, y, z)] = clamp(total * 0.55, 0, 1);
+            } else {
+              field[nodeIndex(x, y, z)] = contributors > 0 ? total / 8 : 0;
+            }
+          }
+        }
+      }
+
+      return field;
+    }
+
+    function sampleField(field, x, y, z) {
+      return field[nodeIndex(x, y, z)];
+    }
+
+    function buildSurfaceNet(material) {
+      const field = buildNodeField(material.key);
+      const iso = Number(isoSlider.value);
+      const vertexMap = new Int32Array(GRID * GRID * GRID);
+      vertexMap.fill(-1);
+      const vertices = [];
+      const triangles = [];
+      let activeCount = 0;
+
+      for (let z = 0; z < GRID; z++) {
+        for (let y = 0; y < GRID; y++) {
+          for (let x = 0; x < GRID; x++) {
+            const values = CORNERS.map(([dx, dy, dz]) => sampleField(field, x + dx, y + dy, z + dz));
+            let mask = 0;
+            for (let i = 0; i < values.length; i++) {
+              if (values[i] >= iso) {
+                mask |= (1 << i);
+              }
+            }
+
+            if (mask === 0 || mask === 255) {
+              continue;
+            }
+
+            const intersections = [];
+            for (const [aIndex, bIndex] of EDGES) {
+              const va = values[aIndex];
+              const vb = values[bIndex];
+              if ((va >= iso) === (vb >= iso) || Math.abs(vb - va) < 0.00001) {
+                continue;
+              }
+
+              const cornerA = CORNERS[aIndex];
+              const cornerB = CORNERS[bIndex];
+              const t = clamp((iso - va) / (vb - va), 0, 1);
+              intersections.push({
+                x: x + lerp(cornerA[0], cornerB[0], t),
+                y: y + lerp(cornerA[1], cornerB[1], t),
+                z: z + lerp(cornerA[2], cornerB[2], t)
+              });
+            }
+
+            if (intersections.length === 0) {
+              continue;
+            }
+
+            let avgX = 0;
+            let avgY = 0;
+            let avgZ = 0;
+            for (const point of intersections) {
+              avgX += point.x;
+              avgY += point.y;
+              avgZ += point.z;
+            }
+
+            const inv = 1 / intersections.length;
+            vertexMap[cellIndex(x, y, z)] = vertices.length;
+            vertices.push({
+              x: avgX * inv - GRID * 0.5,
+              y: avgY * inv - GRID * 0.5,
+              z: avgZ * inv - GRID * 0.5
+            });
+            activeCount++;
+          }
+        }
+      }
+
+      function getVertexFromCell(x, y, z) {
+        if (x < 0 || y < 0 || z < 0 || x >= GRID || y >= GRID || z >= GRID) {
+          return -1;
+        }
+        return vertexMap[cellIndex(x, y, z)];
+      }
+
+      function addQuad(indices) {
+        const [a, b, c, d] = indices;
+        triangles.push({ indices: [a, b, c], color: material.color, accent: material.accent });
+        triangles.push({ indices: [a, c, d], color: material.color, accent: material.accent });
+      }
+
+      for (let z = 0; z < NODE; z++) {
+        for (let y = 0; y < NODE; y++) {
+          for (let x = 0; x < GRID; x++) {
+            const a = sampleField(field, x, y, z);
+            const b = sampleField(field, x + 1, y, z);
+            if ((a >= iso) === (b >= iso)) {
+              continue;
+            }
+            const quad = [
+              getVertexFromCell(x, y - 1, z - 1),
+              getVertexFromCell(x, y, z - 1),
+              getVertexFromCell(x, y, z),
+              getVertexFromCell(x, y - 1, z)
+            ];
+            if (quad.every(index => index >= 0)) {
+              addQuad(quad);
+            }
+          }
+        }
+      }
+
+      for (let z = 0; z < GRID; z++) {
+        for (let y = 0; y < GRID; y++) {
+          for (let x = 0; x < NODE; x++) {
+            const a = sampleField(field, x, y, z);
+            const b = sampleField(field, x, y + 1, z);
+            if ((a >= iso) === (b >= iso)) {
+              continue;
+            }
+            const quad = [
+              getVertexFromCell(x - 1, y, z - 1),
+              getVertexFromCell(x, y, z - 1),
+              getVertexFromCell(x, y, z),
+              getVertexFromCell(x - 1, y, z)
+            ];
+            if (quad.every(index => index >= 0)) {
+              addQuad(quad);
+            }
+          }
+        }
+      }
+
+      for (let z = 0; z < GRID; z++) {
+        for (let y = 0; y < NODE; y++) {
+          for (let x = 0; x < NODE; x++) {
+            const a = sampleField(field, x, y, z);
+            const b = sampleField(field, x, y, z + 1);
+            if ((a >= iso) === (b >= iso)) {
+              continue;
+            }
+            const quad = [
+              getVertexFromCell(x - 1, y - 1, z),
+              getVertexFromCell(x, y - 1, z),
+              getVertexFromCell(x, y, z),
+              getVertexFromCell(x - 1, y, z)
+            ];
+            if (quad.every(index => index >= 0)) {
+              addQuad(quad);
+            }
+          }
+        }
+      }
+
+      return { vertices, triangles, activeCount };
+    }
+
+    function gatherMeshes() {
+      const meshes = [];
+      const mode = showMode.value;
+      for (const material of MATERIALS) {
+        if (mode !== "all" && mode !== material.key) {
+          continue;
+        }
+        meshes.push(buildSurfaceNet(material));
+      }
+      return meshes;
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function getCameraBasis() {
+      const camPos = {
+        x: camera.distance * Math.cos(camera.pitch) * Math.sin(camera.yaw) + camera.panX,
+        y: camera.distance * Math.sin(camera.pitch) + camera.panY,
+        z: camera.distance * Math.cos(camera.pitch) * Math.cos(camera.yaw)
+      };
+      const forward = vecNormalize({ x: camera.panX - camPos.x, y: camera.panY - camPos.y, z: -camPos.z });
+      const right = vecNormalize(vecCross({ x: 0, y: 1, z: 0 }, forward));
+      const up = vecCross(forward, right);
+      return { camPos, forward, right, up };
+    }
+
+    function project(worldPoint, basis, width, height) {
+      const relative = vecSub(worldPoint, basis.camPos);
+      const cameraX = vecDot(relative, basis.right);
+      const cameraY = vecDot(relative, basis.up);
+      const cameraZ = vecDot(relative, basis.forward);
+      if (cameraZ <= 0.15) {
+        return null;
+      }
+
+      const focal = Math.min(width, height) * 0.82;
+      return {
+        x: width * 0.5 + (cameraX / cameraZ) * focal,
+        y: height * 0.5 - (cameraY / cameraZ) * focal,
+        z: cameraZ
+      };
+    }
+
+    function shadeColor(hex, intensity) {
+      const raw = hex.replace("#", "");
+      const r = parseInt(raw.slice(0, 2), 16);
+      const g = parseInt(raw.slice(2, 4), 16);
+      const b = parseInt(raw.slice(4, 6), 16);
+      const scale = clamp(intensity, 0, 1.2);
+      return `rgb(${Math.round(r * scale)}, ${Math.round(g * scale)}, ${Math.round(b * scale)})`;
+    }
+
+    function drawGridBox(basis, width, height) {
+      const corners = [
+        vec3(-2, -2, -2), vec3(2, -2, -2), vec3(2, 2, -2), vec3(-2, 2, -2),
+        vec3(-2, -2, 2), vec3(2, -2, 2), vec3(2, 2, 2), vec3(-2, 2, 2)
+      ];
+      const edges = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+      ];
+
+      ctx.strokeStyle = "rgba(72, 55, 31, 0.28)";
+      ctx.lineWidth = 1;
+
+      for (const [aIndex, bIndex] of edges) {
+        const a = project(corners[aIndex], basis, width, height);
+        const b = project(corners[bIndex], basis, width, height);
+        if (!a || !b) {
+          continue;
+        }
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+
+    function drawSelectedCellOutline(basis, width, height) {
+      const x0 = selected.x - GRID * 0.5;
+      const x1 = x0 + 1;
+      const y0 = selected.y - GRID * 0.5;
+      const y1 = y0 + 1;
+      const z0 = selected.z - GRID * 0.5;
+      const z1 = z0 + 1;
+      const corners = [
+        vec3(x0, y0, z0), vec3(x1, y0, z0), vec3(x1, y0, z1), vec3(x0, y0, z1),
+        vec3(x0, y1, z0), vec3(x1, y1, z0), vec3(x1, y1, z1), vec3(x0, y1, z1)
+      ];
+      const edges = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+      ];
+
+      ctx.strokeStyle = "rgba(197, 107, 56, 0.92)";
+      ctx.lineWidth = 2;
+
+      for (const [aIndex, bIndex] of edges) {
+        const a = project(corners[aIndex], basis, width, height);
+        const b = project(corners[bIndex], basis, width, height);
+        if (!a || !b) {
+          continue;
+        }
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+
+    function drawScene() {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      ctx.clearRect(0, 0, width, height);
+      const basis = getCameraBasis();
+
+      drawGridBox(basis, width, height);
+
+      const drawTriangles = [];
+      const light = vecNormalize({ x: -0.45, y: 0.85, z: 0.2 });
+
+      for (const triangle of meshState.triangles) {
+        const worldA = triangle.world[0];
+        const worldB = triangle.world[1];
+        const worldC = triangle.world[2];
+        const p0 = project(worldA, basis, width, height);
+        const p1 = project(worldB, basis, width, height);
+        const p2 = project(worldC, basis, width, height);
+        if (!p0 || !p1 || !p2) {
+          continue;
+        }
+
+        const ab = vecSub(worldB, worldA);
+        const ac = vecSub(worldC, worldA);
+        const normal = vecNormalize(vecCross(ab, ac));
+        const intensity = 0.48 + Math.abs(vecDot(normal, light)) * 0.72;
+
+        drawTriangles.push({
+          points: [p0, p1, p2],
+          depth: (p0.z + p1.z + p2.z) / 3,
+          fill: shadeColor(triangle.color, intensity),
+          stroke: shadeColor(triangle.accent, intensity * 1.08)
+        });
+      }
+
+      drawTriangles.sort((a, b) => b.depth - a.depth);
+
+      for (const triangle of drawTriangles) {
+        ctx.beginPath();
+        ctx.moveTo(triangle.points[0].x, triangle.points[0].y);
+        ctx.lineTo(triangle.points[1].x, triangle.points[1].y);
+        ctx.lineTo(triangle.points[2].x, triangle.points[2].y);
+        ctx.closePath();
+        ctx.fillStyle = triangle.fill;
+        ctx.globalAlpha = 0.88;
+        ctx.fill();
+        ctx.globalAlpha = 0.92;
+        ctx.strokeStyle = triangle.stroke;
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+      }
+
+      ctx.globalAlpha = 1;
+      drawSelectedCellOutline(basis, width, height);
+    }
+
+    function rebuild() {
+      const meshes = gatherMeshes();
+      meshState = { triangles: [], vertices: 0, active: 0 };
+
+      for (const mesh of meshes) {
+        meshState.vertices += mesh.vertices.length;
+        meshState.active += mesh.activeCount;
+        for (const triangle of mesh.triangles) {
+          meshState.triangles.push({
+            color: triangle.color,
+            accent: triangle.accent,
+            world: triangle.indices.map(index => mesh.vertices[index])
+          });
+        }
+      }
+
+      vertexCount.textContent = meshState.vertices.toString();
+      triangleCount.textContent = meshState.triangles.length.toString();
+      activeCells.textContent = meshState.active.toString();
+      cameraInfo.textContent = `yaw ${camera.yaw.toFixed(2)} pitch ${camera.pitch.toFixed(2)} zoom ${camera.distance.toFixed(1)}`;
+      isoValue.textContent = Number(isoSlider.value).toFixed(2);
+      amountValue.textContent = Number(cellAmount.value).toFixed(2);
+      updateSliceButtons();
+      drawScene();
+    }
+
+    function bindUI() {
+      cellMaterial.addEventListener("change", () => {
+        selectedCell().id = cellMaterial.value;
+        rebuild();
+      });
+
+      cellAmount.addEventListener("input", () => {
+        selectedCell().amount = Number(cellAmount.value);
+        rebuild();
+      });
+
+      isoSlider.addEventListener("input", rebuild);
+      showMode.addEventListener("change", rebuild);
+      kernelMode.addEventListener("change", rebuild);
+
+      document.getElementById("fillButton").addEventListener("click", () => {
+        selectedCell().amount = 1;
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("emptyButton").addEventListener("click", () => {
+        selectedCell().amount = 0;
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("presetDirtHill").addEventListener("click", () => {
+        applyPreset("dirtHill");
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("presetRockSpine").addEventListener("click", () => {
+        applyPreset("rockSpine");
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("presetSandWave").addEventListener("click", () => {
+        applyPreset("sandWave");
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("presetMixedBlob").addEventListener("click", () => {
+        applyPreset("mixedBlob");
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("clearButton").addEventListener("click", () => {
+        clearCells();
+        syncSelectionControls();
+        rebuild();
+      });
+
+      document.getElementById("randomButton").addEventListener("click", () => {
+        randomizeCells();
+        syncSelectionControls();
+        rebuild();
+      });
+
+      let pointer = null;
+      canvas.addEventListener("pointerdown", event => {
+        pointer = {
+          id: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          shift: event.shiftKey
+        };
+        canvas.setPointerCapture(event.pointerId);
+      });
+
+      canvas.addEventListener("pointermove", event => {
+        if (!pointer || pointer.id !== event.pointerId) {
+          return;
+        }
+
+        const dx = event.clientX - pointer.x;
+        const dy = event.clientY - pointer.y;
+        pointer.x = event.clientX;
+        pointer.y = event.clientY;
+
+        if (pointer.shift) {
+          camera.panX += dx * 0.01;
+          camera.panY -= dy * 0.01;
+        } else {
+          camera.yaw += dx * 0.01;
+          camera.pitch = clamp(camera.pitch + dy * 0.01, -1.35, 1.35);
+        }
+
+        rebuild();
+      });
+
+      canvas.addEventListener("pointerup", event => {
+        if (pointer && pointer.id === event.pointerId) {
+          canvas.releasePointerCapture(event.pointerId);
+          pointer = null;
+        }
+      });
+
+      canvas.addEventListener("wheel", event => {
+        event.preventDefault();
+        camera.distance = clamp(camera.distance + event.deltaY * 0.01, 4.5, 18);
+        rebuild();
+      }, { passive: false });
+
+      window.addEventListener("resize", () => {
+        resizeCanvas();
+        drawScene();
+      });
+    }
+
+    initCells();
+    initMaterialOptions();
+    buildSliceUI();
+    bindUI();
+    applyPreset("mixedBlob");
+    syncSelectionControls();
+    resizeCanvas();
+    rebuild();
+  </script>
+</body>
+</html>

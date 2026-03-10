@@ -69,7 +69,7 @@ Material:
     - _ShimmerStrength: 0.348
     - _Smoothness: 0.781
     - _SurfaceAlpha: 1
-    - _UnderwaterRefractionStrength: 0.71
+    - _UnderwaterRefractionStrength: 0.226
     m_Colors:
     - _DeepColor: {r: 0.15218942, g: 0.4048594, b: 0.7169812, a: 1}
     - _PrimaryWaveDirection: {r: 0.9, g: 0.25, b: 0, a: 0}

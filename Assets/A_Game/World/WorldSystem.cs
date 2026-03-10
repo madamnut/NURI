@@ -10,13 +10,16 @@ using UnityEngine;
 /// </summary>
 public sealed class WorldSystem : MonoBehaviour
 {
+    public enum TerrainWireframeMode
+    {
+        Off = 0,
+        Overlay = 1,
+        WireOnly = 2
+    }
+
     private const int LOD0 = 0;
     private const int LOD1 = 1;
     private const int LOD2 = 2;
-    private static readonly int PlanarReflectionTexId = Shader.PropertyToID("_PlanarReflectionTex");
-    private static readonly int PlanarReflectionMatrixId = Shader.PropertyToID("_PlanarReflectionMatrix");
-    private static bool s_isRenderingFluidReflection;
-
     private enum InitialStreamingPhase
     {
         Lod0Only = 0,
@@ -29,13 +32,11 @@ public sealed class WorldSystem : MonoBehaviour
     [SerializeField] private TerrainGenerationSettings _generationSettings = new TerrainGenerationSettings
     {
         NoiseScale = 0.02f,
-        BaseHeight = 48f,
         HeightAmplitude = 64f,
         Seed = 0,
         Octaves = 4,
         Lacunarity = 2f,
         Persistence = 0.5f,
-        SeaLevel = 63f,
         BaseDirtHeight = 70f,
         BaseRockHeight = 65f,
         SurfaceFade = 8f
@@ -61,23 +62,16 @@ public sealed class WorldSystem : MonoBehaviour
     [SerializeField] private ChunkView _chunkViewPrefab;
     [SerializeField] private Transform _chunkRoot;
     [SerializeField] private Material _terrainMaterial;
-    [SerializeField] private Material _fluidMaterial;
     [SerializeField] private TerrainMaterialLibrary _terrainMaterialLibrary;
     [SerializeField] private bool _applyMeshCollider = true;
     [SerializeField, Min(0)] private int _maxChunkViewPoolCount = 256;
 
-    [Header("Fluid Reflection")]
-    [SerializeField] private bool _enableFluidPlanarReflection = true;
-    [SerializeField] private Camera _fluidReflectionSourceCamera;
-    [SerializeField] private LayerMask _fluidReflectionMask = ~0;
-    [SerializeField, Range(256, 2048)] private int _fluidReflectionTextureSize = 1024;
-    [SerializeField, Min(1)] private int _fluidReflectionUpdateEveryNthFrame = 1;
-    [SerializeField, Min(0f)] private float _fluidReflectionClipPlaneOffset = 0.05f;
-    [SerializeField] private bool _hideWaterDuringReflection = true;
-
     [Header("Material Blending")]
     [SerializeField, Range(0f, 1f)] private float _blendDeadZoneMin = 0.2f;
     [SerializeField, Range(0f, 1f)] private float _blendDeadZoneMax = 0.8f;
+
+    [Header("Debug")]
+    [SerializeField] private Color _terrainWireframeColor = new Color(0.02f, 0.03f, 0.04f, 0.92f);
 
     private sealed class PendingChunkGeneration
     {
@@ -207,9 +201,8 @@ public sealed class WorldSystem : MonoBehaviour
     private bool _hasStreamingCenter;
     private ChunkCoord _streamingCenter;
     private InitialStreamingPhase _initialStreamingPhase;
-    private Camera _fluidReflectionCamera;
-    private RenderTexture _fluidReflectionTexture;
-    private float _currentFluidReflectionPlaneHeight;
+    private Material _terrainWireframeMaterial;
+    private TerrainWireframeMode _terrainWireframeMode;
 
     public int ActiveChunkCount => _chunkViews.Count + _proxyViews.Count;
     public int LoadedChunkCount => _chunkStore.Count;
@@ -222,6 +215,8 @@ public sealed class WorldSystem : MonoBehaviour
     public TerrainMaterialLibrary TerrainMaterialLibrary => _terrainMaterialLibrary;
     public int GenerationSeed => _generationSettings.Seed;
     public bool FiniteMap => _finiteMap;
+    public TerrainWireframeMode CurrentTerrainWireframeMode => _terrainWireframeMode;
+    public string TerrainWireframeModeLabel => GetTerrainWireframeModeLabel(_terrainWireframeMode);
     public int FiniteChunkDiameter => Mathf.Max(1, _finiteChunkDiameter);
     public int BaseChunkDiameter => SanitizePositiveMultiple(_baseChunkDiameter, 4);
     public int Proxy1Border => SanitizePositiveMultiple(_proxy1Border, 2);
@@ -230,8 +225,6 @@ public sealed class WorldSystem : MonoBehaviour
     private int MaxChunkViewPoolCount => Mathf.Max(0, _maxChunkViewPoolCount);
     private float BlendDeadZoneMin => Mathf.Clamp01(Mathf.Min(_blendDeadZoneMin, _blendDeadZoneMax));
     private float BlendDeadZoneMax => Mathf.Clamp01(Mathf.Max(_blendDeadZoneMin, _blendDeadZoneMax));
-    public bool FluidPlanarReflectionEnabled => _enableFluidPlanarReflection && _fluidMaterial != null && _fluidReflectionSourceCamera != null;
-    public float CurrentFluidReflectionPlaneHeight => _currentFluidReflectionPlaneHeight;
 
     private void OnValidate()
     {
@@ -251,16 +244,12 @@ public sealed class WorldSystem : MonoBehaviour
         _maxLod0AppliesPerFrame = Mathf.Max(0, _maxLod0AppliesPerFrame);
         _maxProxy1AppliesPerFrame = Mathf.Max(0, _maxProxy1AppliesPerFrame);
         _maxProxy2AppliesPerFrame = Mathf.Max(0, _maxProxy2AppliesPerFrame);
-        _fluidReflectionTextureSize = Mathf.ClosestPowerOfTwo(Mathf.Clamp(_fluidReflectionTextureSize, 256, 2048));
-        _fluidReflectionUpdateEveryNthFrame = Mathf.Max(1, _fluidReflectionUpdateEveryNthFrame);
-        ApplyFluidMaterialSettings();
     }
 
     [ContextMenu("Generate Initial World")]
     public void GenerateInitialWorld()
     {
         EnsureTerrainMaterialConfigured();
-        ApplyFluidMaterialSettings();
         ClearWorld();
 
         HasGeneratedWorld = true;
@@ -379,38 +368,7 @@ public sealed class WorldSystem : MonoBehaviour
         return true;
     }
 
-    public bool TryGetWorldCellWaterLevel(int worldX, int worldY, int worldZ, out byte waterLevel)
-    {
-        waterLevel = WorldConstants.EmptyFluidLevel;
-
-        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
-        {
-            return false;
-        }
-
-        ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldX, worldZ);
-        if (_pendingGenerations.ContainsKey(coord))
-        {
-            return false;
-        }
-
-        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
-        {
-            return false;
-        }
-
-        Vector3Int localCell = WorldMath.WorldCellToLocalCell(worldX, worldY, worldZ);
-        if (localCell.x < 0 || localCell.x >= WorldConstants.ChunkSizeX ||
-            localCell.z < 0 || localCell.z >= WorldConstants.ChunkSizeZ)
-        {
-            return false;
-        }
-
-        waterLevel = chunk.GetWaterLevel(localCell.x, localCell.y, localCell.z);
-        return true;
-    }
-
-    public bool TryGetWorldSampleDensityAt(int worldSampleX, int sampleY, int worldSampleZ, out byte density)
+    public bool TryGetWorldSampleDensityAt(int worldSampleX, int sampleY, int worldSampleZ, out sbyte density)
     {
         return TryGetWorldSampleDensity(worldSampleX, sampleY, worldSampleZ, out density);
     }
@@ -419,6 +377,11 @@ public sealed class WorldSystem : MonoBehaviour
     {
         center = _streamingCenter;
         return _hasStreamingCenter;
+    }
+
+    public void CycleTerrainWireframeMode()
+    {
+        SetTerrainWireframeMode((TerrainWireframeMode)(((int)_terrainWireframeMode + 1) % 3));
     }
 
     [ContextMenu("Rebuild All Loaded Chunks")]
@@ -508,13 +471,11 @@ public sealed class WorldSystem : MonoBehaviour
         {
             return;
         }
-
-        UpdateFluidPlanarReflection();
     }
 
     private void OnDestroy()
     {
-        ReleaseFluidReflectionResources();
+        ReleaseTerrainWireframeResources();
         CompleteAndDisposePendingJobs();
         _chunkStore.Dispose();
     }
@@ -1027,8 +988,6 @@ public sealed class WorldSystem : MonoBehaviour
                 continue;
             }
 
-            InitializeStaticWater(chunk);
-
             if (!_desiredChunkLods.TryGetValue(coord, out int desiredLod))
             {
                 _chunkStore.RemoveAndDispose(coord);
@@ -1175,7 +1134,7 @@ public sealed class WorldSystem : MonoBehaviour
 
         view.SetChunkCoord(coord);
         view.SetMaterial(_terrainMaterial);
-        view.SetWaterMaterial(_fluidMaterial);
+        ApplyTerrainWireframeState(view);
         return view;
     }
 
@@ -1199,6 +1158,7 @@ public sealed class WorldSystem : MonoBehaviour
 
         view.SetProxyCoord(coord);
         view.SetMaterial(_terrainMaterial);
+        ApplyTerrainWireframeState(view);
         return view;
     }
 
@@ -1276,6 +1236,124 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
+    private void SetTerrainWireframeMode(TerrainWireframeMode mode)
+    {
+        _terrainWireframeMode = mode;
+        ApplyTerrainWireframeStateToLoadedViews();
+    }
+
+    private void ApplyTerrainWireframeStateToLoadedViews()
+    {
+        foreach (ChunkView view in _chunkViews.Values)
+        {
+            ApplyTerrainWireframeState(view);
+        }
+
+        foreach (ProxyChunkView view in _proxyViews.Values)
+        {
+            ApplyTerrainWireframeState(view);
+        }
+    }
+
+    private void ApplyTerrainWireframeState(ChunkView view)
+    {
+        if (view == null)
+        {
+            return;
+        }
+
+        bool wireVisible = _terrainWireframeMode != TerrainWireframeMode.Off;
+        bool solidVisible = _terrainWireframeMode != TerrainWireframeMode.WireOnly;
+        Material wireMaterial = wireVisible ? EnsureTerrainWireframeMaterial() : null;
+        view.SetTerrainWireframeState(solidVisible, wireVisible, wireMaterial);
+    }
+
+    private void ApplyTerrainWireframeState(ProxyChunkView view)
+    {
+        if (view == null)
+        {
+            return;
+        }
+
+        bool wireVisible = _terrainWireframeMode != TerrainWireframeMode.Off;
+        bool solidVisible = _terrainWireframeMode != TerrainWireframeMode.WireOnly;
+        Material wireMaterial = wireVisible ? EnsureTerrainWireframeMaterial() : null;
+        view.SetWireframeState(solidVisible, wireVisible, wireMaterial);
+    }
+
+    private Material EnsureTerrainWireframeMaterial()
+    {
+        if (_terrainWireframeMaterial != null)
+        {
+            return _terrainWireframeMaterial;
+        }
+
+        Shader shader =
+            Shader.Find("Universal Render Pipeline/Unlit") ??
+            Shader.Find("Unlit/Color") ??
+            Shader.Find("Sprites/Default");
+
+        if (shader == null)
+        {
+            return null;
+        }
+
+        _terrainWireframeMaterial = new Material(shader)
+        {
+            hideFlags = HideFlags.HideAndDontSave,
+            renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent + 10
+        };
+
+        _terrainWireframeMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        _terrainWireframeMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        _terrainWireframeMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+        _terrainWireframeMaterial.SetInt("_ZWrite", 0);
+
+        if (_terrainWireframeMaterial.HasProperty("_BaseColor"))
+        {
+            _terrainWireframeMaterial.SetColor("_BaseColor", _terrainWireframeColor);
+        }
+
+        if (_terrainWireframeMaterial.HasProperty("_Color"))
+        {
+            _terrainWireframeMaterial.SetColor("_Color", _terrainWireframeColor);
+        }
+
+        return _terrainWireframeMaterial;
+    }
+
+    private void ReleaseTerrainWireframeResources()
+    {
+        if (_terrainWireframeMaterial == null)
+        {
+            return;
+        }
+
+        if (Application.isPlaying)
+        {
+            Destroy(_terrainWireframeMaterial);
+        }
+        else
+        {
+            DestroyImmediate(_terrainWireframeMaterial);
+        }
+
+        _terrainWireframeMaterial = null;
+    }
+
+    private static string GetTerrainWireframeModeLabel(TerrainWireframeMode mode)
+    {
+        switch (mode)
+        {
+            case TerrainWireframeMode.Overlay:
+                return "Overlay";
+            case TerrainWireframeMode.WireOnly:
+                return "WireOnly";
+            default:
+                return "Off";
+        }
+    }
+
     private void EnsureTerrainMaterialConfigured()
     {
         if (_terrainMaterial == null || _terrainMaterialLibrary == null)
@@ -1287,238 +1365,6 @@ public sealed class WorldSystem : MonoBehaviour
         {
             Debug.LogError($"Failed to apply terrain material library: {error}", this);
         }
-    }
-
-    private void ApplyFluidMaterialSettings()
-    {
-        if (_fluidMaterial == null)
-        {
-            Shader.SetGlobalTexture(PlanarReflectionTexId, Texture2D.blackTexture);
-            return;
-        }
-
-        _fluidMaterial.SetTexture(PlanarReflectionTexId, _fluidReflectionTexture != null ? _fluidReflectionTexture : Texture2D.blackTexture);
-    }
-
-    private void UpdateFluidPlanarReflection()
-    {
-        if (!FluidPlanarReflectionEnabled || s_isRenderingFluidReflection)
-        {
-            return;
-        }
-
-        if (Time.frameCount % _fluidReflectionUpdateEveryNthFrame != 0)
-        {
-            return;
-        }
-
-        if (!EnsureFluidReflectionResources())
-        {
-            return;
-        }
-
-        _currentFluidReflectionPlaneHeight = _generationSettings.SeaLevel;
-        RenderFluidPlanarReflection(_currentFluidReflectionPlaneHeight);
-        ApplyFluidMaterialSettings();
-    }
-
-    private bool EnsureFluidReflectionResources()
-    {
-        if (_fluidReflectionSourceCamera == null)
-        {
-            return false;
-        }
-
-        if (_fluidReflectionCamera == null)
-        {
-            GameObject go = new GameObject("FluidPlanarReflectionCamera")
-            {
-                hideFlags = HideFlags.HideAndDontSave
-            };
-            _fluidReflectionCamera = go.AddComponent<Camera>();
-            _fluidReflectionCamera.enabled = false;
-            _fluidReflectionCamera.cameraType = CameraType.Reflection;
-        }
-
-        int textureHeight = Mathf.ClosestPowerOfTwo(Mathf.Clamp(_fluidReflectionTextureSize, 256, 2048));
-        float sourceAspect = Mathf.Max(0.0001f, _fluidReflectionSourceCamera.aspect);
-        int textureWidth = Mathf.ClosestPowerOfTwo(Mathf.Clamp(Mathf.RoundToInt(textureHeight * sourceAspect), 256, 4096));
-        if (_fluidReflectionTexture == null || _fluidReflectionTexture.width != textureWidth || _fluidReflectionTexture.height != textureHeight)
-        {
-            if (_fluidReflectionTexture != null)
-            {
-                _fluidReflectionTexture.Release();
-                if (Application.isPlaying)
-                {
-                    Destroy(_fluidReflectionTexture);
-                }
-                else
-                {
-                    DestroyImmediate(_fluidReflectionTexture);
-                }
-            }
-
-            _fluidReflectionTexture = new RenderTexture(textureWidth, textureHeight, 16, RenderTextureFormat.ARGB32)
-            {
-                name = "FluidPlanarReflectionRT",
-                hideFlags = HideFlags.HideAndDontSave,
-                useMipMap = false,
-                autoGenerateMips = false
-            };
-            _fluidReflectionTexture.Create();
-        }
-
-        _fluidReflectionCamera.targetTexture = _fluidReflectionTexture;
-        Shader.SetGlobalTexture(PlanarReflectionTexId, _fluidReflectionTexture);
-        return true;
-    }
-
-    private void ReleaseFluidReflectionResources()
-    {
-        Shader.SetGlobalTexture(PlanarReflectionTexId, Texture2D.blackTexture);
-
-        if (_fluidReflectionTexture != null)
-        {
-            _fluidReflectionTexture.Release();
-            if (Application.isPlaying)
-            {
-                Destroy(_fluidReflectionTexture);
-            }
-            else
-            {
-                DestroyImmediate(_fluidReflectionTexture);
-            }
-
-            _fluidReflectionTexture = null;
-        }
-
-        if (_fluidReflectionCamera != null)
-        {
-            if (Application.isPlaying)
-            {
-                Destroy(_fluidReflectionCamera.gameObject);
-            }
-            else
-            {
-                DestroyImmediate(_fluidReflectionCamera.gameObject);
-            }
-
-            _fluidReflectionCamera = null;
-        }
-    }
-
-    private void RenderFluidPlanarReflection(float planeHeight)
-    {
-        if (_fluidReflectionCamera == null || _fluidReflectionTexture == null || _fluidReflectionSourceCamera == null)
-        {
-            return;
-        }
-
-        Camera source = _fluidReflectionSourceCamera;
-        Camera reflection = _fluidReflectionCamera;
-        reflection.CopyFrom(source);
-        reflection.enabled = false;
-        reflection.cameraType = CameraType.Reflection;
-        reflection.useOcclusionCulling = source.useOcclusionCulling;
-        reflection.allowHDR = source.allowHDR;
-        reflection.allowMSAA = false;
-        reflection.forceIntoRenderTexture = true;
-        reflection.cullingMask = source.cullingMask & _fluidReflectionMask;
-        reflection.targetTexture = _fluidReflectionTexture;
-
-        Vector3 planePosition = new Vector3(0f, planeHeight, 0f);
-        Vector3 planeNormal = Vector3.up;
-        Vector4 reflectionPlane = new Vector4(
-            planeNormal.x,
-            planeNormal.y,
-            planeNormal.z,
-            -Vector3.Dot(planeNormal, planePosition));
-        Matrix4x4 reflectionMatrix = CalculateReflectionMatrix(reflectionPlane);
-
-        Vector3 reflectedPosition = reflectionMatrix.MultiplyPoint(source.transform.position);
-        reflection.worldToCameraMatrix = source.worldToCameraMatrix * reflectionMatrix;
-        Vector4 clipPlane = CameraSpacePlane(reflection, planePosition, planeNormal, 1.0f, _fluidReflectionClipPlaneOffset);
-        reflection.projectionMatrix = source.CalculateObliqueMatrix(clipPlane);
-
-        reflection.transform.position = reflectedPosition;
-        Vector3 sourceEuler = source.transform.eulerAngles;
-        reflection.transform.eulerAngles = new Vector3(-sourceEuler.x, sourceEuler.y, sourceEuler.z);
-
-        Matrix4x4 gpuProjection = GL.GetGPUProjectionMatrix(reflection.projectionMatrix, true);
-        Matrix4x4 reflectionVp = gpuProjection * reflection.worldToCameraMatrix;
-        Shader.SetGlobalMatrix(PlanarReflectionMatrixId, reflectionVp);
-
-        bool restoreWaterRenderers = _hideWaterDuringReflection;
-        if (restoreWaterRenderers)
-        {
-            SetLoadedWaterRenderersEnabled(false);
-        }
-
-        s_isRenderingFluidReflection = true;
-        bool previousInvertCulling = GL.invertCulling;
-        GL.invertCulling = true;
-        try
-        {
-            reflection.Render();
-        }
-        finally
-        {
-            GL.invertCulling = previousInvertCulling;
-            s_isRenderingFluidReflection = false;
-            if (restoreWaterRenderers)
-            {
-                SetLoadedWaterRenderersEnabled(true);
-            }
-        }
-    }
-
-    private void SetLoadedWaterRenderersEnabled(bool isEnabled)
-    {
-        foreach (ChunkView view in _chunkViews.Values)
-        {
-            if (view == null)
-            {
-                continue;
-            }
-
-            view.SetWaterRenderersEnabled(isEnabled);
-        }
-    }
-
-    private static Vector4 CameraSpacePlane(Camera camera, Vector3 position, Vector3 normal, float sideSign, float clipPlaneOffset)
-    {
-        Vector3 offsetPosition = position + normal * clipPlaneOffset;
-        Matrix4x4 worldToCamera = camera.worldToCameraMatrix;
-        Vector3 cameraPosition = worldToCamera.MultiplyPoint(offsetPosition);
-        Vector3 cameraNormal = worldToCamera.MultiplyVector(normal).normalized * sideSign;
-        return new Vector4(cameraNormal.x, cameraNormal.y, cameraNormal.z, -Vector3.Dot(cameraPosition, cameraNormal));
-    }
-
-    private static Matrix4x4 CalculateReflectionMatrix(Vector4 plane)
-    {
-        Matrix4x4 matrix = Matrix4x4.zero;
-
-        matrix.m00 = 1f - 2f * plane[0] * plane[0];
-        matrix.m01 = -2f * plane[0] * plane[1];
-        matrix.m02 = -2f * plane[0] * plane[2];
-        matrix.m03 = -2f * plane[3] * plane[0];
-
-        matrix.m10 = -2f * plane[1] * plane[0];
-        matrix.m11 = 1f - 2f * plane[1] * plane[1];
-        matrix.m12 = -2f * plane[1] * plane[2];
-        matrix.m13 = -2f * plane[3] * plane[1];
-
-        matrix.m20 = -2f * plane[2] * plane[0];
-        matrix.m21 = -2f * plane[2] * plane[1];
-        matrix.m22 = 1f - 2f * plane[2] * plane[2];
-        matrix.m23 = -2f * plane[3] * plane[2];
-
-        matrix.m30 = 0f;
-        matrix.m31 = 0f;
-        matrix.m32 = 0f;
-        matrix.m33 = 1f;
-
-        return matrix;
     }
 
     private void ScheduleChunkLoadBuild(ChunkData chunk, ChunkView view, bool applyCollider)
@@ -1792,11 +1638,6 @@ public sealed class WorldSystem : MonoBehaviour
                 }
             }
 
-            if (build.TargetLod == LOD0)
-            {
-                RebuildAllWaterSubChunks(chunk, build.View);
-            }
-
             _activeChunkLods[build.Coord] = build.TargetLod;
             build.View.gameObject.SetActive(true);
 
@@ -1953,7 +1794,6 @@ public sealed class WorldSystem : MonoBehaviour
             chunk.ClearSubChunkDirty(subChunkIndex);
         }
 
-        RebuildWaterNeighborhoodForChunk(chunk.Coord);
     }
 
     private void RebuildSubChunk(ChunkData chunk, ChunkView view, int subChunkIndex, bool applyCollider)
@@ -2063,14 +1903,6 @@ public sealed class WorldSystem : MonoBehaviour
             radius,
             deltaAmount);
 
-        ClearWaterInSolidCellsInBounds(
-            minSampleX,
-            maxSampleX,
-            minSampleY,
-            maxSampleY,
-            minSampleZ,
-            maxSampleZ);
-
         if (deltaAmount > 0 && paintMaterialId != 0)
         {
             PaintMaterialsInBounds(
@@ -2096,376 +1928,19 @@ public sealed class WorldSystem : MonoBehaviour
         }
     }
 
-    private void ClearWaterInSolidCellsInBounds(
-        int minSampleX,
-        int maxSampleX,
-        int minSampleY,
-        int maxSampleY,
-        int minSampleZ,
-        int maxSampleZ)
+    private sbyte GetWorldSampleDensityOrGenerated(int worldSampleX, int sampleY, int worldSampleZ)
     {
-        int minCellX = minSampleX - 1;
-        int maxCellX = maxSampleX;
-        int minCellY = Mathf.Max(0, minSampleY - 1);
-        int maxCellY = Mathf.Min(WorldConstants.ChunkSizeY - 1, maxSampleY);
-        int minCellZ = minSampleZ - 1;
-        int maxCellZ = maxSampleZ;
-
-        for (int worldCellZ = minCellZ; worldCellZ <= maxCellZ; worldCellZ++)
+        if (sampleY < 0 || sampleY >= WorldConstants.SampleSizeY)
         {
-            for (int cellY = minCellY; cellY <= maxCellY; cellY++)
-            {
-                for (int worldCellX = minCellX; worldCellX <= maxCellX; worldCellX++)
-                {
-                    ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldCellX, worldCellZ);
-                    if (!_chunkStore.TryGet(coord, out ChunkData chunk))
-                    {
-                        continue;
-                    }
-
-                    Vector3Int localCell = WorldMath.WorldCellToLocalCell(worldCellX, cellY, worldCellZ);
-                    if (chunk.GetWaterLevel(localCell.x, localCell.y, localCell.z) == WorldConstants.EmptyFluidLevel)
-                    {
-                        continue;
-                    }
-
-                    if (IsCellSolidApprox(chunk, localCell.x, localCell.y, localCell.z))
-                    {
-                        chunk.SetWaterLevel(localCell.x, localCell.y, localCell.z, WorldConstants.EmptyFluidLevel);
-                    }
-                }
-            }
-        }
-    }
-
-    private void InitializeStaticWater(ChunkData chunk)
-    {
-        for (int cellY = 0; cellY < WorldConstants.ChunkSizeY; cellY++)
-        {
-            bool belowSeaLevel = cellY + 0.5f < _generationSettings.SeaLevel;
-            for (int cellZ = 0; cellZ < WorldConstants.ChunkSizeZ; cellZ++)
-            {
-                for (int cellX = 0; cellX < WorldConstants.ChunkSizeX; cellX++)
-                {
-                    byte waterLevel = belowSeaLevel && !IsCellSolidApprox(chunk, cellX, cellY, cellZ)
-                        ? WorldConstants.FullFluidLevel
-                        : WorldConstants.EmptyFluidLevel;
-                    chunk.SetWaterLevel(cellX, cellY, cellZ, waterLevel);
-                }
-            }
-        }
-    }
-
-    private void RebuildAllWaterSubChunks(ChunkData chunk, ChunkView view)
-    {
-        if (_fluidMaterial == null)
-        {
-            ClearAllWaterSubChunks(view);
-            return;
+            return WorldConstants.EmptyDensity;
         }
 
-        for (int subChunkIndex = 0; subChunkIndex < WorldConstants.SubChunkCount; subChunkIndex++)
+        if (TryGetWorldSampleDensity(worldSampleX, sampleY, worldSampleZ, out sbyte density))
         {
-            RebuildWaterSubChunk(chunk, view, subChunkIndex);
-        }
-    }
-
-    private void RebuildWaterNeighborhoodForChunk(ChunkCoord center)
-    {
-        if (_fluidMaterial == null)
-        {
-            return;
+            return density;
         }
 
-        RebuildWaterChunkIfLoaded(center);
-        RebuildWaterChunkIfLoaded(new ChunkCoord(center.X - 1, center.Z));
-        RebuildWaterChunkIfLoaded(new ChunkCoord(center.X + 1, center.Z));
-        RebuildWaterChunkIfLoaded(new ChunkCoord(center.X, center.Z - 1));
-        RebuildWaterChunkIfLoaded(new ChunkCoord(center.X, center.Z + 1));
-    }
-
-    private void RebuildWaterChunkIfLoaded(ChunkCoord coord)
-    {
-        if (!_chunkStore.TryGet(coord, out ChunkData chunk) || !_chunkViews.TryGetValue(coord, out ChunkView view))
-        {
-            return;
-        }
-
-        RebuildAllWaterSubChunks(chunk, view);
-    }
-
-    private void ClearAllWaterSubChunks(ChunkView view)
-    {
-        for (int subChunkIndex = 0; subChunkIndex < WorldConstants.SubChunkCount; subChunkIndex++)
-        {
-            SubChunkView waterView = view.GetWaterSubChunk(subChunkIndex);
-            if (waterView != null)
-            {
-                waterView.ClearMesh();
-            }
-        }
-    }
-
-    private void RebuildWaterSubChunk(ChunkData chunk, ChunkView view, int subChunkIndex)
-    {
-        SubChunkView waterView = view.GetWaterSubChunk(subChunkIndex);
-        if (waterView == null)
-        {
-            return;
-        }
-
-        int startY = WorldMath.SubChunkStartY(subChunkIndex);
-        int faceCount = 0;
-
-        for (int localY = 0; localY < WorldConstants.SubChunkSize; localY++)
-        {
-            int cellY = startY + localY;
-            for (int cellZ = 0; cellZ < WorldConstants.ChunkSizeZ; cellZ++)
-            {
-                for (int cellX = 0; cellX < WorldConstants.ChunkSizeX; cellX++)
-                {
-                    if (chunk.GetWaterLevel(cellX, cellY, cellZ) == WorldConstants.EmptyFluidLevel)
-                    {
-                        continue;
-                    }
-
-                    int worldX = chunk.Coord.X * WorldConstants.ChunkSizeX + cellX;
-                    int worldZ = chunk.Coord.Z * WorldConstants.ChunkSizeZ + cellZ;
-                    faceCount += CountVisibleWaterFaces(worldX, cellY, worldZ);
-                }
-            }
-        }
-
-        if (faceCount == 0)
-        {
-            waterView.ClearMesh();
-            return;
-        }
-
-        using (SubChunkMeshData meshData = new SubChunkMeshData(faceCount * 2, Allocator.TempJob))
-        {
-            int vertexIndex = 0;
-
-            for (int localY = 0; localY < WorldConstants.SubChunkSize; localY++)
-            {
-                int cellY = startY + localY;
-                for (int cellZ = 0; cellZ < WorldConstants.ChunkSizeZ; cellZ++)
-                {
-                    for (int cellX = 0; cellX < WorldConstants.ChunkSizeX; cellX++)
-                    {
-                        if (chunk.GetWaterLevel(cellX, cellY, cellZ) == WorldConstants.EmptyFluidLevel)
-                        {
-                            continue;
-                        }
-
-                        int worldX = chunk.Coord.X * WorldConstants.ChunkSizeX + cellX;
-                        int worldZ = chunk.Coord.Z * WorldConstants.ChunkSizeZ + cellZ;
-                        float x0 = cellX;
-                        float x1 = cellX + 1f;
-                        float y0 = localY;
-                        float y1 = localY + 1f;
-                        float z0 = cellZ;
-                        float z1 = cellZ + 1f;
-                        bool faceNegX = ShouldRenderWaterFace(worldX - 1, cellY, worldZ);
-                        bool facePosX = ShouldRenderWaterFace(worldX + 1, cellY, worldZ);
-                        bool faceNegY = ShouldRenderWaterFace(worldX, cellY - 1, worldZ);
-                        bool facePosY = ShouldRenderWaterFace(worldX, cellY + 1, worldZ);
-                        bool faceNegZ = ShouldRenderWaterFace(worldX, cellY, worldZ - 1);
-                        bool facePosZ = ShouldRenderWaterFace(worldX, cellY, worldZ + 1);
-
-                        if (faceNegX)
-                        {
-                            WriteWaterQuad(meshData, ref vertexIndex,
-                                new Vector3(x0, y0, z0),
-                                new Vector3(x0, y0, z1),
-                                new Vector3(x0, y1, z1),
-                                new Vector3(x0, y1, z0),
-                                Vector3.left);
-                        }
-
-                        if (facePosX)
-                        {
-                            WriteWaterQuad(meshData, ref vertexIndex,
-                                new Vector3(x1, y0, z0),
-                                new Vector3(x1, y1, z0),
-                                new Vector3(x1, y1, z1),
-                                new Vector3(x1, y0, z1),
-                                Vector3.right);
-                        }
-
-                        if (faceNegY)
-                        {
-                            WriteWaterQuad(meshData, ref vertexIndex,
-                                new Vector3(x0, y0, z0),
-                                new Vector3(x1, y0, z0),
-                                new Vector3(x1, y0, z1),
-                                new Vector3(x0, y0, z1),
-                                Vector3.down);
-                        }
-
-                        if (facePosY)
-                        {
-                            WriteWaterQuad(meshData, ref vertexIndex,
-                                new Vector3(x0, y1, z0),
-                                new Vector3(x0, y1, z1),
-                                new Vector3(x1, y1, z1),
-                                new Vector3(x1, y1, z0),
-                                Vector3.up,
-                                faceNegX || faceNegZ ? 1f : 0f,
-                                faceNegX || facePosZ ? 1f : 0f,
-                                facePosX || facePosZ ? 1f : 0f,
-                                facePosX || faceNegZ ? 1f : 0f);
-                        }
-
-                        if (faceNegZ)
-                        {
-                            WriteWaterQuad(meshData, ref vertexIndex,
-                                new Vector3(x0, y0, z0),
-                                new Vector3(x0, y1, z0),
-                                new Vector3(x1, y1, z0),
-                                new Vector3(x1, y0, z0),
-                                Vector3.back);
-                        }
-
-                        if (facePosZ)
-                        {
-                            WriteWaterQuad(meshData, ref vertexIndex,
-                                new Vector3(x0, y0, z1),
-                                new Vector3(x1, y0, z1),
-                                new Vector3(x1, y1, z1),
-                                new Vector3(x0, y1, z1),
-                                Vector3.forward);
-                        }
-                    }
-                }
-            }
-
-            MeshApplyUtility.ApplyToSubChunk(waterView, meshData, false);
-        }
-    }
-
-    private static void WriteWaterQuad(
-        SubChunkMeshData meshData,
-        ref int vertexIndex,
-        Vector3 a,
-        Vector3 b,
-        Vector3 c,
-        Vector3 d,
-        Vector3 normal)
-    {
-        WriteWaterQuad(meshData, ref vertexIndex, a, b, c, d, normal, 0f, 0f, 0f, 0f);
-    }
-
-    private static void WriteWaterQuad(
-        SubChunkMeshData meshData,
-        ref int vertexIndex,
-        Vector3 a,
-        Vector3 b,
-        Vector3 c,
-        Vector3 d,
-        Vector3 normal,
-        float foamA,
-        float foamB,
-        float foamC,
-        float foamD)
-    {
-        WriteWaterTriangle(meshData, ref vertexIndex, a, b, c, normal, foamA, foamB, foamC);
-        WriteWaterTriangle(meshData, ref vertexIndex, a, c, d, normal, foamA, foamC, foamD);
-    }
-
-    private static void WriteWaterTriangle(
-        SubChunkMeshData meshData,
-        ref int vertexIndex,
-        Vector3 a,
-        Vector3 b,
-        Vector3 c,
-        Vector3 normal,
-        float foamA,
-        float foamB,
-        float foamC)
-    {
-        meshData.Vertices[vertexIndex] = new float3(a.x, a.y, a.z);
-        meshData.Vertices[vertexIndex + 1] = new float3(b.x, b.y, b.z);
-        meshData.Vertices[vertexIndex + 2] = new float3(c.x, c.y, c.z);
-
-        meshData.Normals[vertexIndex] = new float3(normal.x, normal.y, normal.z);
-        meshData.Normals[vertexIndex + 1] = new float3(normal.x, normal.y, normal.z);
-        meshData.Normals[vertexIndex + 2] = new float3(normal.x, normal.y, normal.z);
-
-        meshData.Indices[vertexIndex] = vertexIndex;
-        meshData.Indices[vertexIndex + 1] = vertexIndex + 1;
-        meshData.Indices[vertexIndex + 2] = vertexIndex + 2;
-
-        meshData.MaterialInfo[vertexIndex] = new float4(foamA, 0f, 0f, 0f);
-        meshData.MaterialInfo[vertexIndex + 1] = new float4(foamB, 0f, 0f, 0f);
-        meshData.MaterialInfo[vertexIndex + 2] = new float4(foamC, 0f, 0f, 0f);
-
-        vertexIndex += 3;
-    }
-
-    private int CountVisibleWaterFaces(int worldX, int worldY, int worldZ)
-    {
-        int faces = 0;
-        faces += ShouldRenderWaterFace(worldX - 1, worldY, worldZ) ? 1 : 0;
-        faces += ShouldRenderWaterFace(worldX + 1, worldY, worldZ) ? 1 : 0;
-        faces += ShouldRenderWaterFace(worldX, worldY - 1, worldZ) ? 1 : 0;
-        faces += ShouldRenderWaterFace(worldX, worldY + 1, worldZ) ? 1 : 0;
-        faces += ShouldRenderWaterFace(worldX, worldY, worldZ - 1) ? 1 : 0;
-        faces += ShouldRenderWaterFace(worldX, worldY, worldZ + 1) ? 1 : 0;
-        return faces;
-    }
-
-    private bool ShouldRenderWaterFace(int worldX, int worldY, int worldZ)
-    {
-        if (TryGetWorldCellWaterLevelOrGenerated(worldX, worldY, worldZ, out byte waterLevel) &&
-            waterLevel > WorldConstants.EmptyFluidLevel)
-        {
-            return false;
-        }
-
-        return !IsWorldCellSolidOrGenerated(worldX, worldY, worldZ);
-    }
-
-    private bool TryGetWorldCellWaterLevelOrGenerated(int worldX, int worldY, int worldZ, out byte waterLevel)
-    {
-        if (TryGetWorldCellWaterLevel(worldX, worldY, worldZ, out waterLevel))
-        {
-            return true;
-        }
-
-        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
-        {
-            waterLevel = WorldConstants.EmptyFluidLevel;
-            return false;
-        }
-
-        waterLevel = GetGeneratedStaticWaterLevel(worldX, worldY, worldZ);
-        return true;
-    }
-
-    private bool IsWorldCellSolidOrGenerated(int worldX, int worldY, int worldZ)
-    {
-        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
-        {
-            return false;
-        }
-
-        ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldX, worldZ);
-        if (!_pendingGenerations.ContainsKey(coord) && _chunkStore.TryGet(coord, out ChunkData chunk))
-        {
-            Vector3Int local = WorldMath.WorldCellToLocalCell(worldX, worldY, worldZ);
-            return IsCellSolidApprox(chunk, local.x, local.y, local.z);
-        }
-
-        return IsGeneratedSolidApprox(worldX, worldY, worldZ);
-    }
-
-    private byte GetGeneratedStaticWaterLevel(int worldX, int worldY, int worldZ)
-    {
-        return worldY + 0.5f < _generationSettings.SeaLevel &&
-            !IsGeneratedSolidApprox(worldX, worldY, worldZ)
-            ? WorldConstants.FullFluidLevel
-            : WorldConstants.EmptyFluidLevel;
+        return TerrainDensityUtility.SampleDensity(_generationSettings, worldSampleX, sampleY, worldSampleZ);
     }
 
     private bool IsGeneratedSolidApprox(int worldX, int worldY, int worldZ)
@@ -2623,14 +2098,14 @@ public sealed class WorldSystem : MonoBehaviour
             return false;
         }
 
-        if (!TryGetWorldSampleDensity(worldX + 0, worldY + 0, worldZ + 0, out byte d0) ||
-            !TryGetWorldSampleDensity(worldX + 1, worldY + 0, worldZ + 0, out byte d1) ||
-            !TryGetWorldSampleDensity(worldX + 1, worldY + 0, worldZ + 1, out byte d2) ||
-            !TryGetWorldSampleDensity(worldX + 0, worldY + 0, worldZ + 1, out byte d3) ||
-            !TryGetWorldSampleDensity(worldX + 0, worldY + 1, worldZ + 0, out byte d4) ||
-            !TryGetWorldSampleDensity(worldX + 1, worldY + 1, worldZ + 0, out byte d5) ||
-            !TryGetWorldSampleDensity(worldX + 1, worldY + 1, worldZ + 1, out byte d6) ||
-            !TryGetWorldSampleDensity(worldX + 0, worldY + 1, worldZ + 1, out byte d7))
+        if (!TryGetWorldSampleDensity(worldX + 0, worldY + 0, worldZ + 0, out sbyte d0) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 0, worldZ + 0, out sbyte d1) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 0, worldZ + 1, out sbyte d2) ||
+            !TryGetWorldSampleDensity(worldX + 0, worldY + 0, worldZ + 1, out sbyte d3) ||
+            !TryGetWorldSampleDensity(worldX + 0, worldY + 1, worldZ + 0, out sbyte d4) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 1, worldZ + 0, out sbyte d5) ||
+            !TryGetWorldSampleDensity(worldX + 1, worldY + 1, worldZ + 1, out sbyte d6) ||
+            !TryGetWorldSampleDensity(worldX + 0, worldY + 1, worldZ + 1, out sbyte d7))
         {
             return false;
         }
@@ -2669,7 +2144,7 @@ public sealed class WorldSystem : MonoBehaviour
                 for (int worldSampleX = minSampleX; worldSampleX <= maxSampleX; worldSampleX++)
                 {
                     Vector3 sampleWorldPosition = new Vector3(worldSampleX, sampleY, worldSampleZ);
-                    if (!TryGetWorldSampleDensity(worldSampleX, sampleY, worldSampleZ, out byte currentDensity))
+                    if (!TryGetWorldSampleDensity(worldSampleX, sampleY, worldSampleZ, out sbyte currentDensity))
                     {
                         continue;
                     }
@@ -2696,7 +2171,7 @@ public sealed class WorldSystem : MonoBehaviour
         Vector3 sampleWorldPosition,
         Vector3 brushCenter,
         float radius,
-        byte currentDensity,
+        sbyte currentDensity,
         int deltaAmount)
     {
         float distance = Vector3.Distance(sampleWorldPosition, brushCenter);
@@ -2719,7 +2194,7 @@ public sealed class WorldSystem : MonoBehaviour
         return delta;
     }
 
-    private bool TryGetWorldSampleDensity(int worldSampleX, int sampleY, int worldSampleZ, out byte density)
+    private bool TryGetWorldSampleDensity(int worldSampleX, int sampleY, int worldSampleZ, out sbyte density)
     {
         density = WorldConstants.EmptyDensity;
 
@@ -2729,6 +2204,11 @@ public sealed class WorldSystem : MonoBehaviour
         }
 
         ChunkCoord coord = WorldMath.WorldSampleToChunkCoord(worldSampleX, worldSampleZ);
+        if (_pendingGenerations.ContainsKey(coord))
+        {
+            return false;
+        }
+
         if (!_chunkStore.TryGet(coord, out ChunkData chunk))
         {
             return false;
@@ -2761,7 +2241,7 @@ public sealed class WorldSystem : MonoBehaviour
         int maxChunkZ = baseChunkZ;
 
         bool newValueComputed = false;
-        byte newValue = 0;
+        sbyte newValue = 0;
 
         for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++)
         {
@@ -2784,8 +2264,8 @@ public sealed class WorldSystem : MonoBehaviour
 
                 if (!newValueComputed)
                 {
-                    byte oldValue = chunk.GetDensity(localSampleX, sampleY, localSampleZ);
-                    newValue = (byte)Mathf.Clamp(oldValue + delta, WorldConstants.EmptyDensity, WorldConstants.FullDensity);
+                    sbyte oldValue = chunk.GetDensity(localSampleX, sampleY, localSampleZ);
+                    newValue = (sbyte)Mathf.Clamp(oldValue + delta, WorldConstants.EmptyDensity, WorldConstants.FullDensity);
                     newValueComputed = true;
                 }
 

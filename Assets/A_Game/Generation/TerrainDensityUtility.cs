@@ -8,14 +8,14 @@ public static class TerrainDensityUtility
     public const byte DirtMaterialId = 1;
     public const byte RockMaterialId = 2;
 
-    public static byte SampleDensity(TerrainGenerationSettings settings, int worldX, int sampleY, int worldZ)
+    public static sbyte SampleDensity(TerrainGenerationSettings settings, int worldX, int sampleY, int worldZ)
     {
         float height = SampleSurfaceHeight(settings, worldX, worldZ);
         float fade = math.max(0.001f, settings.SurfaceFade);
         float signedDistance = height - sampleY;
         float normalizedDensity = signedDistance / fade * 0.5f + 0.5f;
         float clampedDensity = math.clamp(normalizedDensity, 0f, 1f);
-        return (byte)math.round(clampedDensity * WorldConstants.FullDensity);
+        return (sbyte)math.round(math.lerp(WorldConstants.EmptyDensity, WorldConstants.FullDensity, clampedDensity));
     }
 
     public static byte SampleMaterialId(TerrainGenerationSettings settings, int worldX, int cellY, int worldZ)

@@ -22,7 +22,6 @@ public struct TerrainGenerationSettings
     /// <summary>
     /// 전체 지형의 기본 높이 오프셋이다.
     /// </summary>
-    public float BaseHeight;
 
     /// <summary>
     /// 노이즈가 만들어 낼 높이 변화 폭이다.
@@ -36,8 +35,6 @@ public struct TerrainGenerationSettings
     public float Lacunarity;
 
     public float Persistence;
-
-    public float SeaLevel;
 
     public float BaseDirtHeight;
 

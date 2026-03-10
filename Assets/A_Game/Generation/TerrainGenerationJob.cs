@@ -11,7 +11,7 @@ public struct TerrainGenerationJob : IJobParallelFor
     public ChunkCoord Coord;
     public TerrainGenerationSettings Settings;
 
-    public NativeArray<byte> Density;
+    public NativeArray<sbyte> Density;
 
     [NativeDisableParallelForRestriction]
     [WriteOnly]

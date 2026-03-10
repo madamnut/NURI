@@ -47,7 +47,6 @@ public sealed class VoxelEditController : MonoBehaviour
     private void Update()
     {
         HandleMaterialModeShortcuts();
-        HandleRebuildShortcut();
         HandleContinuousEdit();
     }
 
@@ -65,22 +64,6 @@ public sealed class VoxelEditController : MonoBehaviour
         else if (Keyboard.current.digit2Key.wasPressedThisFrame)
         {
             _selectedMaterialId = RockMaterialId;
-        }
-    }
-
-    /// <summary>
-    /// R 키를 누르면 현재 density 데이터를 기준으로 전체 청크 메시를 다시 만든다.
-    /// </summary>
-    private void HandleRebuildShortcut()
-    {
-        if (_worldSystem == null || Keyboard.current == null)
-        {
-            return;
-        }
-
-        if (Keyboard.current.rKey.wasPressedThisFrame)
-        {
-            _worldSystem.RebuildAllLoadedChunks(false);
         }
     }
 

@@ -456,7 +456,7 @@ MonoBehaviour:
   _worldSystem: {fileID: 1976003901}
   _playerController: {fileID: 1955707072}
   _brushRadius: 2
-  _editSpeedPerSecond: 10
+  _editSpeedPerSecond: 2000
   _maxRayDistance: 500
   _hitMask:
     serializedVersion: 2
@@ -2039,22 +2039,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldSystem
   _generationSettings:
     NoiseScale: 0.02
-    BaseHeight: 48
-    HeightAmplitude: 64
+    HeightAmplitude: 30
     Seed: 0
     Octaves: 4
     Lacunarity: 2
     Persistence: 0.5
-    SeaLevel: 100
     BaseDirtHeight: 70
     BaseRockHeight: 65
     SurfaceFade: 8
   _streamingTarget: {fileID: 1955707069}
   _finiteMap: 0
-  _finiteChunkDiameter: 8
+  _finiteChunkDiameter: 16
   _baseChunkDiameter: 16
   _proxy1Border: 16
-  _proxy2Border: 32
+  _proxy2Border: 16
   _renderProxyChunks: 1
   _maxLod0LoadsPerFrame: 2
   _maxProxy1LoadsPerFrame: 1
@@ -2066,21 +2064,12 @@ MonoBehaviour:
   _chunkViewPrefab: {fileID: 68376585372058145, guid: 4adc5534646c11c4788b785e65fb5f88, type: 3}
   _chunkRoot: {fileID: 1976003902}
   _terrainMaterial: {fileID: 2100000, guid: 9936319df9970504e99b5af1ab084fac, type: 2}
-  _fluidMaterial: {fileID: 2100000, guid: defb25b6a15293a47906dc60e49ed3a5, type: 2}
   _terrainMaterialLibrary: {fileID: 11400000, guid: 67d6b29e2bd240c499fe69e462393340, type: 2}
   _applyMeshCollider: 1
   _maxChunkViewPoolCount: 256
-  _enableFluidPlanarReflection: 1
-  _fluidReflectionSourceCamera: {fileID: 330585545}
-  _fluidReflectionMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  _fluidReflectionTextureSize: 1024
-  _fluidReflectionUpdateEveryNthFrame: 1
-  _fluidReflectionClipPlaneOffset: 0.05
-  _hideWaterDuringReflection: 1
   _blendDeadZoneMin: 0.3
   _blendDeadZoneMax: 0.7
+  _terrainWireframeColor: {r: 0.02, g: 0.03, b: 0.04, a: 0.92}
 --- !u!4 &1976003902
 Transform:
   m_ObjectHideFlags: 0

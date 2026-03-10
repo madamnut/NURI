@@ -71,17 +71,15 @@ public static class WorldConstants
     /// <summary>
     /// density가 이 값을 넘으면 "표면 안쪽"으로 간주하는 기준값이다.
     /// </summary>
-    public const byte SurfaceThreshold = 128;
+    public const sbyte SurfaceThreshold = 0;
 
     /// <summary>
     /// 완전히 비어 있는 상태를 뜻하는 density 값이다.
     /// </summary>
-    public const byte EmptyDensity = 0;
+    public const sbyte EmptyDensity = -128;
 
     /// <summary>
     /// 완전히 가득 찬 상태를 뜻하는 density 값이다.
     /// </summary>
-    public const byte FullDensity = 255;
-    public const byte EmptyFluidLevel = 0;
-    public const byte FullFluidLevel = 255;
+    public const sbyte FullDensity = 127;
 }

@@ -205,8 +205,7 @@ public sealed class WorldDebugUI : MonoBehaviour
         {
             selectedMaterialLabel = selectedMaterialId.ToString();
         }
-        string waterReflectionLabel = _worldSystem != null && _worldSystem.FluidPlanarReflectionEnabled ? "ON" : "OFF";
-        float waterReflectionHeight = _worldSystem != null ? _worldSystem.CurrentFluidReflectionPlaneHeight : 0f;
+        string wireframeLabel = _worldSystem != null ? _worldSystem.TerrainWireframeModeLabel : "Off";
         string leftText =
             $"FPS: {_currentFps}\n" +
             $"Camera: {cameraModeLabel}\n" +
@@ -215,7 +214,7 @@ public sealed class WorldDebugUI : MonoBehaviour
             $"{_currentTargetLabel}\n" +
             $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}\n" +
             $"LodBounds: {GetLodBoundaryModeLabel()}\n" +
-            $"WaterRefl: {waterReflectionLabel} @ {waterReflectionHeight:F2}\n" +
+            $"Wireframe: {wireframeLabel}\n" +
             $"Paint: {selectedMaterialLabel} (ID: {selectedMaterialId})\n" +
             $"Seed: {(_worldSystem != null ? _worldSystem.GenerationSeed : 0)}";
 
@@ -339,7 +338,7 @@ public sealed class WorldDebugUI : MonoBehaviour
             int sampleX = Mathf.RoundToInt(worldVertex.x);
             int sampleY = Mathf.RoundToInt(worldVertex.y);
             int sampleZ = Mathf.RoundToInt(worldVertex.z);
-            byte density = 0;
+            sbyte density = 0;
             bool hasDensity = _worldSystem.TryGetWorldSampleDensityAt(sampleX, sampleY, sampleZ, out density);
 
             int primaryId = Mathf.RoundToInt(materialInfo.x);
@@ -395,6 +394,13 @@ public sealed class WorldDebugUI : MonoBehaviour
         if (_isF3Held && keyboard.lKey.wasPressedThisFrame)
         {
             _lodBoundaryMode = GetNextLodBoundaryMode(_lodBoundaryMode);
+            _consumedF3Chord = true;
+            RefreshText();
+        }
+
+        if (_isF3Held && keyboard.wKey.wasPressedThisFrame)
+        {
+            _worldSystem?.CycleTerrainWireframeMode();
             _consumedF3Chord = true;
             RefreshText();
         }
