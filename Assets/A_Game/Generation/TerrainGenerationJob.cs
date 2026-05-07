@@ -3,7 +3,7 @@ using Unity.Collections;
 using Unity.Jobs;
 
 /// <summary>
-/// Fills a chunk's full-resolution density and material grids from world-space terrain rules.
+/// Fills a chunk's cell-based material id/amount grids from world-space terrain rules.
 /// </summary>
 [BurstCompile]
 public struct TerrainGenerationJob : IJobParallelFor
@@ -11,31 +11,25 @@ public struct TerrainGenerationJob : IJobParallelFor
     public ChunkCoord Coord;
     public TerrainGenerationSettings Settings;
 
-    public NativeArray<sbyte> Density;
-
     [NativeDisableParallelForRestriction]
     [WriteOnly]
     public NativeArray<byte> MaterialIds;
 
+    [NativeDisableParallelForRestriction]
+    [WriteOnly]
+    public NativeArray<byte> MaterialAmounts;
+
     public void Execute(int index)
     {
-        int sampleX = index % WorldConstants.SampleSizeX;
-        int sampleZ = (index / WorldConstants.SampleSizeX) % WorldConstants.SampleSizeZ;
-        int sampleY = index / (WorldConstants.SampleSizeX * WorldConstants.SampleSizeZ);
+        int cellX = index % WorldConstants.ChunkSizeX;
+        int cellZ = (index / WorldConstants.ChunkSizeX) % WorldConstants.ChunkSizeZ;
+        int cellY = index / (WorldConstants.ChunkSizeX * WorldConstants.ChunkSizeZ);
 
-        int worldX = Coord.X * WorldConstants.ChunkSizeX + sampleX;
-        int worldZ = Coord.Z * WorldConstants.ChunkSizeZ + sampleZ;
+        int worldX = Coord.X * WorldConstants.ChunkSizeX + cellX;
+        int worldZ = Coord.Z * WorldConstants.ChunkSizeZ + cellZ;
 
-        Density[index] = TerrainDensityUtility.SampleDensity(Settings, worldX, sampleY, worldZ);
-
-        if (sampleX >= WorldConstants.ChunkSizeX ||
-            sampleY >= WorldConstants.ChunkSizeY ||
-            sampleZ >= WorldConstants.ChunkSizeZ)
-        {
-            return;
-        }
-
-        MaterialIds[WorldMath.CellIndex(sampleX, sampleY, sampleZ)] =
-            TerrainDensityUtility.SampleMaterialId(Settings, worldX, sampleY, worldZ);
+        byte amount = TerrainDensityUtility.SampleCellAmount(Settings, worldX, cellY, worldZ);
+        MaterialAmounts[index] = amount;
+        MaterialIds[index] = TerrainDensityUtility.SampleMaterialId(Settings, worldX, cellY, worldZ, amount);
     }
 }

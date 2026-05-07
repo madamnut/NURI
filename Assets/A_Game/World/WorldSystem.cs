@@ -10,6 +10,16 @@ using UnityEngine;
 /// </summary>
 public sealed class WorldSystem : MonoBehaviour
 {
+    public struct CellRaycastHit
+    {
+        public Vector3Int Cell;
+        public Vector3Int PreviousCell;
+        public bool HasPreviousCell;
+        public byte MaterialId;
+        public byte Amount;
+        public float Distance;
+    }
+
     public enum TerrainWireframeMode
     {
         Off = 0,
@@ -368,9 +378,117 @@ public sealed class WorldSystem : MonoBehaviour
         return true;
     }
 
+    public bool TryGetWorldCellData(int worldX, int worldY, int worldZ, out byte materialId, out byte amount)
+    {
+        materialId = 0;
+        amount = 0;
+
+        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
+        {
+            return false;
+        }
+
+        ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldX, worldZ);
+        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+        {
+            return false;
+        }
+
+        Vector3Int localCell = WorldMath.WorldCellToLocalCell(worldX, worldY, worldZ);
+        if (localCell.x < 0 || localCell.x >= WorldConstants.ChunkSizeX ||
+            localCell.z < 0 || localCell.z >= WorldConstants.ChunkSizeZ)
+        {
+            return false;
+        }
+
+        materialId = chunk.GetMaterialId(localCell.x, localCell.y, localCell.z);
+        amount = chunk.GetMaterialAmount(localCell.x, localCell.y, localCell.z);
+        return true;
+    }
+
     public bool TryGetWorldSampleDensityAt(int worldSampleX, int sampleY, int worldSampleZ, out sbyte density)
     {
         return TryGetWorldSampleDensity(worldSampleX, sampleY, worldSampleZ, out density);
+    }
+
+    public bool TryRaycastSolidCell(Ray ray, float maxDistance, out CellRaycastHit hit)
+    {
+        hit = default;
+
+        Vector3 direction = ray.direction;
+        float directionLength = direction.magnitude;
+        if (directionLength <= 0.0001f)
+        {
+            return false;
+        }
+
+        direction /= directionLength;
+        maxDistance = Mathf.Max(0f, maxDistance);
+
+        Vector3 position = ray.origin;
+        Vector3Int cell = new Vector3Int(
+            Mathf.FloorToInt(position.x),
+            Mathf.FloorToInt(position.y),
+            Mathf.FloorToInt(position.z));
+
+        Vector3Int step = new Vector3Int(
+            direction.x > 0f ? 1 : (direction.x < 0f ? -1 : 0),
+            direction.y > 0f ? 1 : (direction.y < 0f ? -1 : 0),
+            direction.z > 0f ? 1 : (direction.z < 0f ? -1 : 0));
+
+        float tMaxX = ComputeRayAxisStart(position.x, direction.x, cell.x, step.x);
+        float tMaxY = ComputeRayAxisStart(position.y, direction.y, cell.y, step.y);
+        float tMaxZ = ComputeRayAxisStart(position.z, direction.z, cell.z, step.z);
+        float tDeltaX = ComputeRayAxisDelta(direction.x);
+        float tDeltaY = ComputeRayAxisDelta(direction.y);
+        float tDeltaZ = ComputeRayAxisDelta(direction.z);
+
+        float distance = 0f;
+        Vector3Int previousCell = default;
+        bool hasPreviousCell = false;
+
+        while (distance <= maxDistance)
+        {
+            if (TryGetWorldCellData(cell.x, cell.y, cell.z, out byte materialId, out byte amount) &&
+                materialId != 0 &&
+                amount > 0)
+            {
+                hit = new CellRaycastHit
+                {
+                    Cell = cell,
+                    PreviousCell = previousCell,
+                    HasPreviousCell = hasPreviousCell,
+                    MaterialId = materialId,
+                    Amount = amount,
+                    Distance = distance
+                };
+                return true;
+            }
+
+            previousCell = cell;
+            hasPreviousCell = true;
+
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ)
+            {
+                cell.x += step.x;
+                distance = tMaxX;
+                tMaxX += tDeltaX;
+            }
+            else if (tMaxY <= tMaxX && tMaxY <= tMaxZ)
+            {
+                cell.y += step.y;
+                distance = tMaxY;
+                tMaxY += tDeltaY;
+            }
+            else
+            {
+                cell.z += step.z;
+                distance = tMaxZ;
+                tMaxZ += tDeltaZ;
+            }
+        }
+
+        return false;
     }
 
     public bool TryGetStreamingCenter(out ChunkCoord center)
@@ -444,6 +562,223 @@ public sealed class WorldSystem : MonoBehaviour
     public void ApplySphereBrush(Vector3 worldPosition, float radius, int deltaAmount)
     {
         ApplyOrientedBrush(worldPosition, Vector3.up, radius, deltaAmount, 0);
+    }
+
+    public void ApplyCellEdit(Vector3Int cell, int deltaAmount, byte paintMaterialId)
+    {
+        if (!HasGeneratedWorld || deltaAmount == 0)
+        {
+            return;
+        }
+
+        _modifiedChunks.Clear();
+        ModifyCell(cell.x, cell.y, cell.z, deltaAmount, paintMaterialId);
+
+        foreach (ChunkCoord coord in _modifiedChunks)
+        {
+            if (_chunkStore.TryGet(coord, out ChunkData dirtyChunk) &&
+                _chunkViews.TryGetValue(coord, out ChunkView dirtyView))
+            {
+                RebuildDirtySubChunks(dirtyChunk, dirtyView, _applyMeshCollider);
+            }
+        }
+    }
+
+    public void ApplyCellBrush(Vector3Int centerCell, float radius, int deltaAmount, byte paintMaterialId)
+    {
+        if (!HasGeneratedWorld || radius <= 0f || deltaAmount == 0)
+        {
+            return;
+        }
+
+        int radiusInt = Mathf.CeilToInt(radius);
+        float radiusSq = radius * radius;
+        _modifiedChunks.Clear();
+
+        for (int worldZ = centerCell.z - radiusInt; worldZ <= centerCell.z + radiusInt; worldZ++)
+        {
+            for (int worldY = centerCell.y - radiusInt; worldY <= centerCell.y + radiusInt; worldY++)
+            {
+                for (int worldX = centerCell.x - radiusInt; worldX <= centerCell.x + radiusInt; worldX++)
+                {
+                    if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
+                    {
+                        continue;
+                    }
+
+                    Vector3 cellCenter = new Vector3(worldX + 0.5f, worldY + 0.5f, worldZ + 0.5f);
+                    Vector3 brushCenter = new Vector3(centerCell.x + 0.5f, centerCell.y + 0.5f, centerCell.z + 0.5f);
+                    if ((cellCenter - brushCenter).sqrMagnitude > radiusSq)
+                    {
+                        continue;
+                    }
+
+                    ModifyCell(worldX, worldY, worldZ, deltaAmount, paintMaterialId);
+                }
+            }
+        }
+
+        foreach (ChunkCoord coord in _modifiedChunks)
+        {
+            if (_chunkStore.TryGet(coord, out ChunkData dirtyChunk) &&
+                _chunkViews.TryGetValue(coord, out ChunkView dirtyView))
+            {
+                RebuildDirtySubChunks(dirtyChunk, dirtyView, _applyMeshCollider);
+            }
+        }
+    }
+
+    private void ModifyCell(int worldX, int worldY, int worldZ, int deltaAmount, byte paintMaterialId)
+    {
+        ChunkCoord coord = WorldMath.WorldCellToChunkCoord(worldX, worldZ);
+        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+        {
+            return;
+        }
+
+        Vector3Int localCell = WorldMath.WorldCellToLocalCell(worldX, worldY, worldZ);
+        if (localCell.x < 0 || localCell.x >= WorldConstants.ChunkSizeX ||
+            localCell.y < 0 || localCell.y >= WorldConstants.ChunkSizeY ||
+            localCell.z < 0 || localCell.z >= WorldConstants.ChunkSizeZ)
+        {
+            return;
+        }
+
+        byte currentId = chunk.GetMaterialId(localCell.x, localCell.y, localCell.z);
+        byte currentAmount = chunk.GetMaterialAmount(localCell.x, localCell.y, localCell.z);
+        byte nextId = currentId;
+        byte nextAmount = currentAmount;
+
+        if (deltaAmount < 0)
+        {
+            if (currentAmount == 0)
+            {
+                return;
+            }
+
+            nextAmount = (byte)Mathf.Max(0, currentAmount + deltaAmount);
+            if (nextAmount == 0)
+            {
+                nextId = TerrainDensityUtility.AirMaterialId;
+            }
+        }
+        else
+        {
+            if (paintMaterialId == TerrainDensityUtility.AirMaterialId)
+            {
+                return;
+            }
+
+            if (currentAmount != 0 && currentId != paintMaterialId)
+            {
+                return;
+            }
+
+            nextAmount = (byte)Mathf.Min(255, currentAmount + deltaAmount);
+            nextId = nextAmount == 0 ? TerrainDensityUtility.AirMaterialId : paintMaterialId;
+        }
+
+        if (nextId == currentId && nextAmount == currentAmount)
+        {
+            return;
+        }
+
+        chunk.SetMaterialId(localCell.x, localCell.y, localCell.z, nextId);
+        chunk.SetMaterialAmount(localCell.x, localCell.y, localCell.z, nextAmount);
+        _modifiedChunks.Add(coord);
+        RefreshDensitiesAroundWorldCell(worldX, worldY, worldZ);
+    }
+
+    private void RefreshDensitiesAroundWorldCell(int worldCellX, int worldCellY, int worldCellZ)
+    {
+        for (int sampleZ = worldCellZ; sampleZ <= worldCellZ + 1; sampleZ++)
+        {
+            for (int sampleY = worldCellY; sampleY <= worldCellY + 1; sampleY++)
+            {
+                for (int sampleX = worldCellX; sampleX <= worldCellX + 1; sampleX++)
+                {
+                    RefreshWorldSampleDensity(sampleX, sampleY, sampleZ);
+                }
+            }
+        }
+    }
+
+    private void RefreshWorldSampleDensity(int worldSampleX, int sampleY, int worldSampleZ)
+    {
+        if (sampleY < 0 || sampleY >= WorldConstants.SampleSizeY)
+        {
+            return;
+        }
+
+        ChunkCoord coord = WorldMath.WorldSampleToChunkCoord(worldSampleX, worldSampleZ);
+        if (!_chunkStore.TryGet(coord, out ChunkData chunk))
+        {
+            return;
+        }
+
+        Vector2Int localSample = WorldMath.WorldSampleToLocalSampleXZ(worldSampleX, worldSampleZ);
+        sbyte newDensity = ComputeWorldSampleDensityFromCells(worldSampleX, sampleY, worldSampleZ);
+        if (chunk.GetDensity(localSample.x, sampleY, localSample.y) == newDensity)
+        {
+            return;
+        }
+
+        chunk.SetDensity(localSample.x, sampleY, localSample.y, newDensity);
+        MarkSampleAffectedSubChunks(chunk, sampleY);
+        _modifiedChunks.Add(coord);
+    }
+
+    private sbyte ComputeWorldSampleDensityFromCells(int worldSampleX, int sampleY, int worldSampleZ)
+    {
+        int totalDensity = 0;
+
+        for (int offsetZ = 0; offsetZ <= 1; offsetZ++)
+        {
+            for (int offsetY = 0; offsetY <= 1; offsetY++)
+            {
+                for (int offsetX = 0; offsetX <= 1; offsetX++)
+                {
+                    totalDensity += TerrainDensityUtility.CellAmountToMeshingDensity(GetWorldCellAmountOrGenerated(
+                        worldSampleX - 1 + offsetX,
+                        sampleY - 1 + offsetY,
+                        worldSampleZ - 1 + offsetZ));
+                }
+            }
+        }
+
+        int averageDensity = Mathf.RoundToInt(totalDensity / 8f);
+        return (sbyte)Mathf.Clamp(averageDensity, WorldConstants.EmptyDensity, WorldConstants.FullDensity);
+    }
+
+    private byte GetWorldCellAmountOrGenerated(int worldX, int worldY, int worldZ)
+    {
+        if (worldY < 0 || worldY >= WorldConstants.ChunkSizeY)
+        {
+            return 0;
+        }
+
+        if (TryGetWorldCellData(worldX, worldY, worldZ, out _, out byte amount))
+        {
+            return amount;
+        }
+
+        return TerrainDensityUtility.SampleCellAmount(_generationSettings, worldX, worldY, worldZ);
+    }
+
+    private static float ComputeRayAxisStart(float origin, float direction, int cell, int step)
+    {
+        if (step == 0 || Mathf.Abs(direction) <= 0.000001f)
+        {
+            return float.PositiveInfinity;
+        }
+
+        float boundary = step > 0 ? cell + 1f : cell;
+        return (boundary - origin) / direction;
+    }
+
+    private static float ComputeRayAxisDelta(float direction)
+    {
+        return Mathf.Abs(direction) <= 0.000001f ? float.PositiveInfinity : Mathf.Abs(1f / direction);
     }
 
     private void Update()
@@ -890,14 +1225,25 @@ public sealed class WorldSystem : MonoBehaviour
         {
             Coord = coord,
             Settings = _generationSettings,
-            Density = chunk.Density,
-            MaterialIds = chunk.MaterialIds
+            MaterialIds = chunk.MaterialIds,
+            MaterialAmounts = chunk.MaterialAmounts
         };
+
+        TerrainSampleDensityFromCellsJob densityJob = new TerrainSampleDensityFromCellsJob
+        {
+            Coord = coord,
+            Settings = _generationSettings,
+            MaterialAmounts = chunk.MaterialAmounts,
+            Density = chunk.Density
+        };
+
+        JobHandle cellHandle = generationJob.Schedule(WorldConstants.ChunkCellCount, 128);
+        JobHandle densityHandle = densityJob.Schedule(WorldConstants.ChunkSampleCount, 128, cellHandle);
 
         PendingChunkGeneration operation = new PendingChunkGeneration
         {
             Coord = coord,
-            Handle = generationJob.Schedule(WorldConstants.ChunkSampleCount, 128)
+            Handle = densityHandle
         };
 
         _pendingGenerations.Add(coord, operation);

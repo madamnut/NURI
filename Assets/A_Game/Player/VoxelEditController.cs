@@ -20,7 +20,7 @@ public sealed class VoxelEditController : MonoBehaviour
     [SerializeField] private PlayerController _playerController;
 
     [Header("브러시 설정")]
-    [SerializeField] private float _brushRadius = 3f;
+    [SerializeField] private bool _brushEnabled = false;
     [SerializeField] private float _editSpeedPerSecond = 40f;
 
     [Header("레이캐스트 설정")]
@@ -35,6 +35,14 @@ public sealed class VoxelEditController : MonoBehaviour
     public float MaxRayDistance => _maxRayDistance;
     public LayerMask HitMask => _hitMask;
     public byte SelectedMaterialId => _selectedMaterialId;
+    public bool BrushEnabled => _brushEnabled;
+    public float EditSpeedPerSecond => _editSpeedPerSecond;
+
+    public void ToggleBrushEnabled()
+    {
+        _brushEnabled = !_brushEnabled;
+        _editAccumulator = 0f;
+    }
 
     private void Awake()
     {
@@ -46,18 +54,22 @@ public sealed class VoxelEditController : MonoBehaviour
 
     private void Update()
     {
-        HandleMaterialModeShortcuts();
+        HandleEditorShortcuts();
         HandleContinuousEdit();
     }
 
-    private void HandleMaterialModeShortcuts()
+    private void HandleEditorShortcuts()
     {
         if (Keyboard.current == null)
         {
             return;
         }
 
-        if (Keyboard.current.digit1Key.wasPressedThisFrame)
+        if (Keyboard.current.bKey.wasPressedThisFrame)
+        {
+            ToggleBrushEnabled();
+        }
+        else if (Keyboard.current.digit1Key.wasPressedThisFrame)
         {
             _selectedMaterialId = DirtMaterialId;
         }
@@ -78,6 +90,12 @@ public sealed class VoxelEditController : MonoBehaviour
             return;
         }
 
+        if (!_brushEnabled)
+        {
+            _editAccumulator = 0f;
+            return;
+        }
+
         bool destroyHeld = Mouse.current.leftButton.isPressed;
         bool createHeld = Mouse.current.rightButton.isPressed;
 
@@ -89,7 +107,7 @@ public sealed class VoxelEditController : MonoBehaviour
 
         int sign = destroyHeld ? -1 : 1;
 
-        if (!TryGetEditHit(out RaycastHit hit))
+        if (!TryGetTargetCell(out WorldSystem.CellRaycastHit hit))
         {
             _editAccumulator = 0f;
             return;
@@ -104,14 +122,29 @@ public sealed class VoxelEditController : MonoBehaviour
         }
 
         _editAccumulator -= delta;
-        byte paintMaterialId = sign > 0 ? _selectedMaterialId : (byte)0;
-        _worldSystem.ApplyOrientedBrush(hit.point, hit.normal, _brushRadius, sign * delta, paintMaterialId);
+        if (sign < 0)
+        {
+            _worldSystem.ApplyCellEdit(hit.Cell, -delta, TerrainDensityUtility.AirMaterialId);
+            return;
+        }
+
+        Vector3Int targetCell = hit.Cell;
+        bool shouldPlaceOnAdjacentCell =
+            hit.HasPreviousCell &&
+            (hit.MaterialId != _selectedMaterialId || hit.Amount >= byte.MaxValue);
+
+        if (shouldPlaceOnAdjacentCell)
+        {
+            targetCell = hit.PreviousCell;
+        }
+
+        _worldSystem.ApplyCellEdit(targetCell, delta, _selectedMaterialId);
     }
 
     /// <summary>
     /// 카메라 화면 정중앙에서 레이를 쏴 현재 조준 중인 표면을 찾는다.
     /// </summary>
-    private bool TryGetEditHit(out RaycastHit hit)
+    private bool TryGetTargetCell(out WorldSystem.CellRaycastHit hit)
     {
         hit = default;
 
@@ -127,7 +160,7 @@ public sealed class VoxelEditController : MonoBehaviour
             Debug.DrawRay(ray.origin, ray.direction * _maxRayDistance, Color.red, 0f, false);
         }
 
-        bool didHit = Physics.Raycast(ray, out hit, _maxRayDistance, _hitMask, QueryTriggerInteraction.Ignore);
+        bool didHit = _worldSystem != null && _worldSystem.TryRaycastSolidCell(ray, _maxRayDistance, out hit);
 
         if (_debugRaycast && Time.unscaledTime >= _nextDebugLogTime)
         {
@@ -135,11 +168,11 @@ public sealed class VoxelEditController : MonoBehaviour
 
             if (didHit)
             {
-                Debug.Log($"[VoxelEdit] Hit: {hit.collider.name}, Point: {hit.point}, Normal: {hit.normal}");
+                Debug.Log($"[VoxelEdit] Cell: {hit.Cell}, Prev: {(hit.HasPreviousCell ? hit.PreviousCell.ToString() : "None")}, Id: {hit.MaterialId}, Amount: {hit.Amount}");
             }
             else
             {
-                Debug.Log("[VoxelEdit] Raycast did not hit anything.");
+                Debug.Log("[VoxelEdit] Raycast did not hit any non-air cell.");
             }
         }
 

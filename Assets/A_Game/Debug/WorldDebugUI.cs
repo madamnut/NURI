@@ -40,6 +40,7 @@ public sealed class WorldDebugUI : MonoBehaviour
     [SerializeField] private Color _lod0ToLod1BoundsColor = new Color(0.35f, 1f, 0.35f, 0.12f);
     [SerializeField] private Color _lod1ToLod2BoundsColor = new Color(1f, 0.85f, 0.25f, 0.12f);
     [SerializeField] private Color _lod2OuterBoundsColor = new Color(1f, 0.35f, 0.35f, 0.12f);
+    [SerializeField] private Color _targetCellOutlineColor = new Color(1f, 0.95f, 0.2f, 0.95f);
 
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorId = Shader.PropertyToID("_Color");
@@ -55,9 +56,8 @@ public sealed class WorldDebugUI : MonoBehaviour
     private Material _surfaceMaterial;
     private Mesh _quadMesh;
     private string _currentTargetLabel = "Target: Air";
-    private readonly List<int> _debugTriangleIndices = new List<int>(3);
-    private readonly List<Vector3> _debugVertices = new List<Vector3>(64);
-    private readonly List<Vector4> _debugMaterialInfo = new List<Vector4>(64);
+    private bool _hasCurrentTargetCell;
+    private Vector3Int _currentTargetCell;
     private readonly StringBuilder _targetStringBuilder = new StringBuilder(256);
 
     private void Awake()
@@ -104,7 +104,14 @@ public sealed class WorldDebugUI : MonoBehaviour
 
     private void OnRenderObject()
     {
-        if ((!_areChunkBoundsVisible && _lodBoundaryMode == LodBoundaryDisplayMode.None) || _worldSystem == null)
+        if (_worldSystem == null)
+        {
+            return;
+        }
+
+        if (!_areChunkBoundsVisible &&
+            _lodBoundaryMode == LodBoundaryDisplayMode.None &&
+            !_hasCurrentTargetCell)
         {
             return;
         }
@@ -139,6 +146,11 @@ public sealed class WorldDebugUI : MonoBehaviour
         if (_lodBoundaryMode != LodBoundaryDisplayMode.None)
         {
             DrawLodBoundary();
+        }
+
+        if (_hasCurrentTargetCell)
+        {
+            DrawCellOutline(_currentTargetCell, _targetCellOutlineColor);
         }
     }
 
@@ -196,6 +208,8 @@ public sealed class WorldDebugUI : MonoBehaviour
         string cameraModeLabel = _playerController != null ? _playerController.CurrentCameraViewModeLabel : "Unknown";
         string movementModeLabel = _playerController != null ? _playerController.CurrentMovementModeLabel : "Unknown";
         Vector3 feetPosition = _playerController != null ? _playerController.FeetPosition : Vector3.zero;
+        bool brushEnabled = _voxelEditController != null && _voxelEditController.BrushEnabled;
+        float editRate = _voxelEditController != null ? _voxelEditController.EditSpeedPerSecond : 0f;
         string selectedMaterialLabel = "None";
         if (selectedMaterialId != 0 && _worldSystem != null && _worldSystem.TerrainMaterialLibrary != null)
         {
@@ -215,6 +229,7 @@ public sealed class WorldDebugUI : MonoBehaviour
             $"ChunkBounds: {(_areChunkBoundsVisible ? "ON" : "OFF")}\n" +
             $"LodBounds: {GetLodBoundaryModeLabel()}\n" +
             $"Wireframe: {wireframeLabel}\n" +
+            $"Brush: {(brushEnabled ? "ON" : "OFF")} @ {editRate:F0}/s (B)\n" +
             $"Paint: {selectedMaterialLabel} (ID: {selectedMaterialId})\n" +
             $"Seed: {(_worldSystem != null ? _worldSystem.GenerationSeed : 0)}";
 
@@ -249,11 +264,11 @@ public sealed class WorldDebugUI : MonoBehaviour
     {
         if (_worldSystem == null)
         {
+            _hasCurrentTargetCell = false;
             return "Target: Air";
         }
 
         float maxDistance = _voxelEditController != null ? _voxelEditController.MaxRayDistance : 500f;
-        LayerMask hitMask = _voxelEditController != null ? _voxelEditController.HitMask : ~0;
 
         Ray ray;
         if (_playerController != null)
@@ -265,109 +280,32 @@ public sealed class WorldDebugUI : MonoBehaviour
             Camera targetCamera = _referenceCamera != null ? _referenceCamera : Camera.main;
             if (targetCamera == null)
             {
+                _hasCurrentTargetCell = false;
                 return "Target: Air";
             }
 
             ray = targetCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
         }
 
-        if (!Physics.Raycast(ray, out RaycastHit hit, Mathf.Max(0.1f, maxDistance), hitMask, QueryTriggerInteraction.Ignore))
+        if (!_worldSystem.TryRaycastSolidCell(ray, Mathf.Max(0.1f, maxDistance), out WorldSystem.CellRaycastHit hit))
         {
+            _hasCurrentTargetCell = false;
             return "Target: Air";
         }
 
-        Vector3 insidePoint = hit.point - hit.normal * 0.01f;
-        int cellX = Mathf.FloorToInt(insidePoint.x);
-        int cellY = Mathf.FloorToInt(insidePoint.y);
-        int cellZ = Mathf.FloorToInt(insidePoint.z);
-
-        if (!_worldSystem.TryGetWorldCellMaterial(cellX, cellY, cellZ, out byte materialId) || materialId == 0)
-        {
-            return "Target: Air";
-        }
-
+        _hasCurrentTargetCell = true;
+        _currentTargetCell = hit.Cell;
+        byte materialId = hit.MaterialId;
+        byte amount = hit.Amount;
         TerrainMaterialLibrary materialLibrary = _worldSystem.TerrainMaterialLibrary;
         string materialName = materialLibrary != null
             ? materialLibrary.GetDisplayName(materialId)
             : $"Material {materialId}";
         _targetStringBuilder.Clear();
         _targetStringBuilder.Append($"Target: {materialName} (ID: {materialId})");
-        AppendTriangleVertexDebug(hit, materialLibrary, _targetStringBuilder);
+        _targetStringBuilder.Append($" Amount: {amount}");
+        _targetStringBuilder.Append($"\nCell: {hit.Cell.x}/{hit.Cell.y}/{hit.Cell.z}");
         return _targetStringBuilder.ToString();
-    }
-
-    private void AppendTriangleVertexDebug(RaycastHit hit, TerrainMaterialLibrary materialLibrary, StringBuilder builder)
-    {
-        if (!(hit.collider is MeshCollider meshCollider))
-        {
-            return;
-        }
-
-        Mesh mesh = meshCollider.sharedMesh;
-        if (mesh == null || hit.triangleIndex < 0)
-        {
-            return;
-        }
-
-        _debugTriangleIndices.Clear();
-        mesh.GetTriangles(_debugTriangleIndices, 0);
-        int triangleStart = hit.triangleIndex * 3;
-        if (triangleStart + 2 >= _debugTriangleIndices.Count)
-        {
-            return;
-        }
-
-        _debugVertices.Clear();
-        mesh.GetVertices(_debugVertices);
-        _debugMaterialInfo.Clear();
-        mesh.GetUVs(1, _debugMaterialInfo);
-
-        for (int corner = 0; corner < 3; corner++)
-        {
-            int vertexIndex = _debugTriangleIndices[triangleStart + corner];
-            if ((uint)vertexIndex >= (uint)_debugVertices.Count)
-            {
-                continue;
-            }
-
-            Vector3 worldVertex = hit.collider.transform.TransformPoint(_debugVertices[vertexIndex]);
-            Vector4 materialInfo = (uint)vertexIndex < (uint)_debugMaterialInfo.Count
-                ? _debugMaterialInfo[vertexIndex]
-                : Vector4.zero;
-
-            int sampleX = Mathf.RoundToInt(worldVertex.x);
-            int sampleY = Mathf.RoundToInt(worldVertex.y);
-            int sampleZ = Mathf.RoundToInt(worldVertex.z);
-            sbyte density = 0;
-            bool hasDensity = _worldSystem.TryGetWorldSampleDensityAt(sampleX, sampleY, sampleZ, out density);
-
-            int primaryId = Mathf.RoundToInt(materialInfo.x);
-            int secondaryId = Mathf.RoundToInt(materialInfo.y);
-            float blendWeight = Mathf.Clamp01(materialInfo.z);
-            string primaryName = primaryId > 0 && materialLibrary != null ? materialLibrary.GetDisplayName((byte)primaryId) : primaryId.ToString();
-            string secondaryName = secondaryId > 0 && materialLibrary != null ? materialLibrary.GetDisplayName((byte)secondaryId) : secondaryId.ToString();
-
-            builder.Append('\n');
-            builder.Append("V");
-            builder.Append(corner);
-            builder.Append(": ");
-            builder.Append(primaryName);
-            builder.Append(" (");
-            builder.Append(primaryId);
-            builder.Append(")");
-            if (secondaryId > 0 && secondaryId != primaryId)
-            {
-                builder.Append(" -> ");
-                builder.Append(secondaryName);
-                builder.Append(" (");
-                builder.Append(secondaryId);
-                builder.Append(") ");
-                builder.Append(blendWeight.ToString("F2"));
-            }
-
-            builder.Append(", D=");
-            builder.Append(hasDensity ? density.ToString() : "N/A");
-        }
     }
 
     private void HandleDebugShortcuts()
@@ -574,6 +512,51 @@ public sealed class WorldDebugUI : MonoBehaviour
         _surfaceMaterial.SetColor(ColorId, color);
         _surfaceMaterial.SetPass(0);
         Graphics.DrawMeshNow(_quadMesh, matrix);
+    }
+
+    private void DrawCellOutline(Vector3Int cell, Color color)
+    {
+        if (_surfaceMaterial == null)
+        {
+            return;
+        }
+
+        float x0 = cell.x;
+        float y0 = cell.y;
+        float z0 = cell.z;
+        float x1 = x0 + 1f;
+        float y1 = y0 + 1f;
+        float z1 = z0 + 1f;
+
+        _surfaceMaterial.SetColor(BaseColorId, color);
+        _surfaceMaterial.SetColor(ColorId, color);
+        _surfaceMaterial.SetPass(0);
+
+        GL.Begin(GL.LINES);
+        GL.Color(color);
+
+        DrawLine(x0, y0, z0, x1, y0, z0);
+        DrawLine(x1, y0, z0, x1, y0, z1);
+        DrawLine(x1, y0, z1, x0, y0, z1);
+        DrawLine(x0, y0, z1, x0, y0, z0);
+
+        DrawLine(x0, y1, z0, x1, y1, z0);
+        DrawLine(x1, y1, z0, x1, y1, z1);
+        DrawLine(x1, y1, z1, x0, y1, z1);
+        DrawLine(x0, y1, z1, x0, y1, z0);
+
+        DrawLine(x0, y0, z0, x0, y1, z0);
+        DrawLine(x1, y0, z0, x1, y1, z0);
+        DrawLine(x1, y0, z1, x1, y1, z1);
+        DrawLine(x0, y0, z1, x0, y1, z1);
+
+        GL.End();
+    }
+
+    private static void DrawLine(float ax, float ay, float az, float bx, float by, float bz)
+    {
+        GL.Vertex3(ax, ay, az);
+        GL.Vertex3(bx, by, bz);
     }
 
     private static Mesh CreateQuadMesh()

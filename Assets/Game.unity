@@ -455,8 +455,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::VoxelEditController
   _worldSystem: {fileID: 1976003901}
   _playerController: {fileID: 1955707072}
-  _brushRadius: 2
-  _editSpeedPerSecond: 2000
+  _brushEnabled: 1
+  _editSpeedPerSecond: 50
   _maxRayDistance: 500
   _hitMask:
     serializedVersion: 2
@@ -957,6 +957,7 @@ MonoBehaviour:
   _lod0ToLod1BoundsColor: {r: 0.35, g: 1, b: 0.35, a: 0.12}
   _lod1ToLod2BoundsColor: {r: 1, g: 0.85, b: 0.25, a: 0.12}
   _lod2OuterBoundsColor: {r: 1, g: 0.35, b: 0.35, a: 0.12}
+  _targetCellOutlineColor: {r: 1, g: 0.95, b: 0.2, a: 0.95}
 --- !u!1 &944225250
 GameObject:
   m_ObjectHideFlags: 0
@@ -2048,12 +2049,12 @@ MonoBehaviour:
     BaseRockHeight: 65
     SurfaceFade: 8
   _streamingTarget: {fileID: 1955707069}
-  _finiteMap: 0
-  _finiteChunkDiameter: 16
+  _finiteMap: 1
+  _finiteChunkDiameter: 4
   _baseChunkDiameter: 16
   _proxy1Border: 16
   _proxy2Border: 16
-  _renderProxyChunks: 1
+  _renderProxyChunks: 0
   _maxLod0LoadsPerFrame: 2
   _maxProxy1LoadsPerFrame: 1
   _maxProxy2LoadsPerFrame: 1
